@@ -321,6 +321,11 @@
     cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
   }
 
+  .photo-edit-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+  .photo-edit-row img { width: 44px; height: 44px; object-fit: cover; border-radius: 6px; background: var(--night-3); }
+  .photo-edit-row .photo-edit-name { flex: 1; font-size: .8rem; color: var(--text-dim); }
+  .photo-edit-row .retry-chip { margin: 0; }
+
   /* ---------- Opened letter ---------- */
   .letter-open {
     background: var(--paper); color: var(--ink); border-radius: 4px;
@@ -494,7 +499,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.2.0';
 
 /* ============ Arizona time (no DST — never derive "today" from toISOString) ============ */
 
@@ -633,7 +638,8 @@ let openMilestone = null;
 let promptIdx = Store.get('prompt_idx', Math.floor((Date.now() / 86400000)) % PROMPTS.length);
 let promptOverride = null;      // set by the ✨ Claude button
 const openedSeals = new Set(Store.get('opened_seals', []));
-const pendingMedia = new Map(); // entryId -> { blob, mime, kind } awaiting upload retry (session only)
+const pendingMedia = new Map();  // entryId -> { blob, mime, ext } voice awaiting upload retry (session only)
+const pendingPhotos = new Map(); // entryId -> [{ blob, slot }] photos awaiting upload retry (session only)
 const mediaCache = new Map();   // repo path -> object URL
 
 const role = () => Store.get('role');                  // 'chris' | 'kat' | 'reader' | null
@@ -1003,6 +1009,46 @@ function compressPhoto(file) {
   });
 }
 
+// Every photo on an entry, oldest shape first: legacy single media, then the photos array.
+function photosOf(e) {
+  const list = [];
+  if (e.media && e.media.path && (!e.media.mime || e.media.mime.startsWith('image'))) {
+    list.push({ path: e.media.path, mime: e.media.mime || 'image/jpeg' });
+  }
+  if (Array.isArray(e.photos)) e.photos.forEach(p => { if (p && p.path) list.push(p); });
+  return list;
+}
+
+// Entry text is already saved before this runs — a failed upload never loses the story.
+async function attachPhotos(entryId, items) {
+  const failed = [];
+  for (const it of items) {
+    const path = 'photos/' + entryId + '_' + it.slot + '.jpg';
+    try {
+      try { await ghPutBase64(path, await blobToBase64(it.blob)); }
+      catch (err) { if (!String(err.message).includes('422')) throw err; } // already up there — fine
+      const rec = DB.records[entryId];
+      if (rec) {
+        const photos = Array.isArray(rec.photos) ? rec.photos.slice() : [];
+        if (!photos.some(p => p.path === path)) photos.push({ path, mime: 'image/jpeg' });
+        commit(recs => { recs[entryId] = { ...rec, photos, updatedAt: Date.now() }; });
+      }
+    } catch (err) { failed.push(it); }
+  }
+  if (failed.length) pendingPhotos.set(entryId, failed); else pendingPhotos.delete(entryId);
+  return failed.length;
+}
+
+function retryPhotos(entryId) {
+  const items = pendingPhotos.get(entryId);
+  if (!items) return;
+  toast('Trying the uploads again…');
+  attachPhotos(entryId, items).then(n => {
+    toast(n ? 'Still ' + n + ' stuck — the story is safe, try again on better signal.' : 'All tucked in.');
+    render();
+  });
+}
+
 // Entry text is already saved before this runs — media failure never loses the words.
 function attachMedia(entryId, blob, mime, ext, onProgress) {
   const kind = mime.startsWith('audio') ? 'voice' : 'photos';
@@ -1353,23 +1399,29 @@ function entryCard(e, editable) {
   c.appendChild(el('span', 'entry-type ' + cls, label));
 
   if (e.kind === 'photo') {
-    const frame = el('div', 'photo-frame');
-    if (e.media && e.media.path) {
+    const shots = photosOf(e);
+    shots.forEach((ph, i) => {
+      const frame = el('div', 'photo-frame');
       const img = document.createElement('img');
       img.alt = e.caption || e.title || 'photo';
-      fetchMedia(e.media.path).then(url => { img.src = url; }).catch(() => {
+      fetchMedia(ph.path).then(url => { img.src = url; }).catch(() => {
         frame.appendChild(el('span', null, 'photo unavailable right now'));
       });
       frame.appendChild(img);
+      if (i === 0 && e.caption) frame.appendChild(el('span', null, e.caption));
+      c.appendChild(frame);
+    });
+    if (shots.length === 0) {
+      const frame = el('div', 'photo-frame');
+      if (e.caption) frame.appendChild(el('span', null, e.caption));
+      c.appendChild(frame);
+      if (!pendingPhotos.has(e.id)) c.appendChild(el('div', 'media-note', 'The photos didn’t make it up — the story is safe.'));
     }
-    if (e.caption) frame.appendChild(el('span', null, e.caption));
-    c.appendChild(frame);
-    if (!e.media && pendingMedia.has(e.id)) {
-      const r = el('button', 'retry-chip', 'Photo didn’t upload — tap to retry');
-      r.addEventListener('click', () => retryMedia(e.id));
+    if (pendingPhotos.has(e.id)) {
+      const n = pendingPhotos.get(e.id).length;
+      const r = el('button', 'retry-chip', n + (n === 1 ? ' photo didn’t upload' : ' photos didn’t upload') + ' — tap to retry');
+      r.addEventListener('click', () => retryPhotos(e.id));
       c.appendChild(r);
-    } else if (!e.media) {
-      c.appendChild(el('div', 'media-note', 'The photo didn’t make it up — the story is safe.'));
     }
   }
 
@@ -1483,7 +1535,7 @@ function openCompose(type, milestone) {
     return;
   }
   const isPhoto = type === 'photo';
-  let photoFile = null;
+  let photoFiles = [];
   showModal({
     title: isPhoto ? 'Photo story' : 'Write a letter',
     message: milestone.when + ' · for ' + WHO_LABEL[who],
@@ -1491,12 +1543,14 @@ function openCompose(type, milestone) {
     buildBody(box) {
       let fileNote = null;
       if (isPhoto) {
-        box.appendChild(el('label', null, 'The photo'));
+        box.appendChild(el('label', null, 'The photos (up to 8)'));
         const file = document.createElement('input');
-        file.type = 'file'; file.accept = 'image/*';
+        file.type = 'file'; file.accept = 'image/*'; file.multiple = true;
         file.addEventListener('change', () => {
-          photoFile = file.files[0] || null;
-          if (fileNote) fileNote.textContent = photoFile ? photoFile.name : '';
+          photoFiles = [...file.files].slice(0, 8);
+          if (file.files.length > 8) toast('Eight photos per story — the first eight are in.');
+          if (fileNote) fileNote.textContent = photoFiles.length === 0 ? '' :
+            (photoFiles.length === 1 ? photoFiles[0].name : photoFiles.length + ' photos picked');
         });
         box.appendChild(file);
         fileNote = el('div', 'hint', '');
@@ -1540,12 +1594,19 @@ function openCompose(type, milestone) {
         body: api.body.value.trim()
       });
       toast('Sealed into “' + milestone.when + '”.');
-      // Entry text is saved; the photo attaches second so a failed upload never loses the words.
-      if (isPhoto && photoFile) {
-        compressPhoto(photoFile)
-          .then(blob => attachMedia(entry.id, blob, 'image/jpeg', 'jpg'))
-          .then(() => { toast('Photo tucked in too.'); render(); })
-          .catch(() => { toast('Photo upload failed — the story is saved. Tap retry on the card.'); render(); });
+      // Entry text is saved; photos attach second so a failed upload never loses the words.
+      if (isPhoto && photoFiles.length) {
+        const stamp = Date.now().toString(36);
+        Promise.all(photoFiles.map(f => compressPhoto(f).catch(() => null))).then(blobs => {
+          const items = blobs.map((b, i) => b ? { blob: b, slot: stamp + '-' + i } : null).filter(Boolean);
+          if (!items.length) { toast('Those photos couldn’t be read — the story is saved.'); render(); return; }
+          attachPhotos(entry.id, items).then(n => {
+            toast(n
+              ? n + (n === 1 ? ' photo' : ' photos') + ' didn’t upload — the story is saved. Tap retry on the card.'
+              : (items.length === 1 ? 'Photo tucked in too.' : items.length + ' photos tucked in.'));
+            render();
+          });
+        });
       }
       render();
     }
@@ -1565,17 +1626,46 @@ function openEdit(e) {
         title.type = 'text'; title.value = e.title || '';
         box.appendChild(title);
       }
+      let getKept = null, addInput = null;
       if (e.kind === 'photo') {
         box.appendChild(el('label', null, 'Caption'));
         caption = document.createElement('input');
         caption.type = 'text'; caption.value = e.caption || '';
         box.appendChild(caption);
+
+        box.appendChild(el('label', null, 'Photos'));
+        let kept = photosOf(e);
+        const listBox = el('div');
+        const drawList = () => {
+          listBox.textContent = '';
+          kept.forEach((p, i) => {
+            const row = el('div', 'photo-edit-row');
+            const img = document.createElement('img');
+            img.alt = 'photo ' + (i + 1);
+            fetchMedia(p.path).then(u => { img.src = u; }).catch(() => {});
+            row.appendChild(img);
+            row.appendChild(el('span', 'photo-edit-name', 'Photo ' + (i + 1)));
+            const rm = el('button', 'retry-chip', 'Remove');
+            rm.addEventListener('click', () => { kept = kept.filter((_, j) => j !== i); drawList(); });
+            row.appendChild(rm);
+            listBox.appendChild(row);
+          });
+          if (!kept.length) listBox.appendChild(el('div', 'hint', 'No photos on this story yet.'));
+        };
+        drawList();
+        box.appendChild(listBox);
+        getKept = () => kept;
+
+        box.appendChild(el('label', null, 'Add photos'));
+        addInput = document.createElement('input');
+        addInput.type = 'file'; addInput.accept = 'image/*'; addInput.multiple = true;
+        box.appendChild(addInput);
       }
       box.appendChild(el('label', null, e.kind === 'answer' ? 'Your answer' : 'The words'));
       const body = document.createElement('textarea');
       body.value = e.body || '';
       box.appendChild(body);
-      return { title, caption, body };
+      return { title, caption, body, getKept, addInput };
     },
     onConfirm(api) {
       if (!api.body.value.trim()) { toast('It can’t be empty — delete it instead.'); return false; }
@@ -1585,10 +1675,25 @@ function openEdit(e) {
           title: api.title ? (api.title.value.trim() || e.title) : e.title,
           caption: api.caption ? api.caption.value.trim() : e.caption,
           body: api.body.value.trim(),
+          // editing a photo story normalizes it onto the photos array (legacy single-media included)
+          ...(e.kind === 'photo' ? { photos: api.getKept(), media: undefined } : {}),
           updatedAt: Date.now()
         };
       });
-      toast('Saved.');
+      const added = api.addInput ? [...api.addInput.files].slice(0, 8) : [];
+      if (added.length) {
+        const stamp = Date.now().toString(36);
+        Promise.all(added.map(f => compressPhoto(f).catch(() => null))).then(blobs => {
+          const items = blobs.map((b, i) => b ? { blob: b, slot: stamp + '-' + i } : null).filter(Boolean);
+          if (!items.length) { toast('Those photos couldn’t be read.'); render(); return; }
+          attachPhotos(e.id, items).then(n => {
+            toast(n ? n + ' photo(s) didn’t upload — tap retry on the card.' : 'Saved, photos and all.');
+            render();
+          });
+        });
+      } else {
+        toast('Saved.');
+      }
       render();
     }
   });
@@ -2264,11 +2369,13 @@ function openPrintEdition() {
         ms.appendChild(el('h3', null, m.when));
         list.forEach(e => {
           const card = el('div', 'p-entry' + (e.author === 'kat' ? ' by-kat' : ''));
-          if (e.kind === 'photo' && e.media && e.media.path) {
-            const img = document.createElement('img');
-            img.alt = e.caption || '';
-            imgJobs.push(fetchMedia(e.media.path).then(u => { img.src = u; }).catch(() => img.remove()));
-            card.appendChild(img);
+          if (e.kind === 'photo') {
+            photosOf(e).forEach(ph => {
+              const img = document.createElement('img');
+              img.alt = e.caption || '';
+              imgJobs.push(fetchMedia(ph.path).then(u => { img.src = u; }).catch(() => img.remove()));
+              card.appendChild(img);
+            });
           }
           if (e.title) {
             const pt = el('div', 'p-title', e.title);
