@@ -1,0 +1,16 @@
+{
+  "name": "Open When — for Sedona & River",
+  "short_name": "Open When",
+  "description": "A time capsule of letters, photos, and voice notes for Sedona and River.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#171226",
+  "theme_color": "#171226",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
