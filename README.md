@@ -38,7 +38,16 @@ Unlocks are synced records (`unlock_<who>_<milestone>`):
 - **Moment envelopes** (heartbreak, hard day, wedding, becoming a parent,
   missing me) need the keeper passphrase, entered by Kat when the time is right.
   The real passphrase never leaves the device — only its SHA-256 hash syncs.
+- **Custom envelopes** can be added from the shelf ("+ A new envelope") and
+  open by keeper passphrase, by hand, or on a chosen date. They sync as
+  `milestone` records and can be removed only while empty.
+- **"Open whenever"** holds the one-line quick captures (little notes) and is
+  never sealed — the girls can read it the day they get the book.
 - **Anything** can be unsealed by hand in author mode.
+
+A welcome note (written in Settings) greets the girls before any envelope the
+first time reader mode opens. When Mom and Dad answer the same prompt for the
+same girl, readers see both answers together on one card.
 
 ## First-run setup
 
@@ -59,6 +68,21 @@ sheet the app generates walks through exactly this.
 
 ## Backups
 
-Settings → Download the archive saves a JSON snapshot of everything (media as
-repo paths). Keep a copy somewhere that isn't a phone. This is the
-"if something happens to this phone" backup.
+Three layers:
+
+1. **Automatic daily mirror** — each day's first successful sync also writes
+   `backup/data.json` into the private media repo, so a Gist mishap alone can
+   never erase the book.
+2. **Settings → Backup, the words** — a light JSON snapshot (media as repo
+   paths).
+3. **Settings → Backup, everything** — the full bundle with photos and voice
+   embedded. This is the real "if anything happens" file; keep a copy
+   somewhere that isn't a phone.
+
+**Settings → Restore from a backup file** loads either format back in. Restore
+merges — per record, the newest version wins — so an old backup can never
+overwrite newer writing. Bundles also offer to re-upload their embedded media
+into the media repo.
+
+The app also warns (quietly, via the API's token-expiration header) when the
+GitHub key is within 30 days of expiring.

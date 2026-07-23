@@ -285,6 +285,41 @@
     background: rgba(201,163,92,.06); color: var(--gold); font-family: 'Lora', serif;
     font-size: .88rem; cursor: pointer;
   }
+  .t-note { background: #5d7a52; }
+
+  .quick-card {
+    background: var(--night-2); border: 1px solid var(--night-3); border-radius: 18px;
+    padding: 16px 20px; margin: -10px 0 26px;
+  }
+  .quick-row { display: flex; gap: 10px; margin-top: 10px; }
+  .quick-row input {
+    flex: 1; min-height: 44px; background: rgba(0,0,0,.25); border: 1px solid var(--night-3);
+    border-radius: 12px; padding: 0 12px; color: var(--text); font-family: 'Lora', serif; font-size: .95rem;
+  }
+  .quick-row input:focus { outline: 2px solid var(--gold-soft); }
+
+  .memory-card {
+    background: linear-gradient(160deg, var(--night-2), var(--night-3));
+    border: 1px solid var(--night-3); border-radius: 18px; padding: 16px 20px;
+    margin: 4px 0 30px; cursor: pointer;
+  }
+  .memory-card .mem-snippet { font-family: 'Instrument Serif', serif; font-style: italic; font-size: 1.1rem; line-height: 1.45; }
+  .memory-card .mem-meta { font-size: .74rem; color: var(--text-dim); margin-top: 8px; }
+
+  .envelope.env-new {
+    background: transparent; border: 1.5px dashed var(--gold-soft); box-shadow: none;
+    display: flex; align-items: center; justify-content: center; padding: 14px;
+  }
+  .envelope.env-new .env-new-label { color: var(--gold); font-size: .9rem; text-align: center; }
+
+  .pair-author { font-family: 'Caveat', cursive; font-size: 1.25rem; color: var(--sedona-wax); margin: 12px 0 2px; }
+  .pair-author.by-kat-text { color: var(--kat); }
+
+  .link-btn {
+    display: block; margin: -6px auto 14px; background: none; border: none; min-height: 40px;
+    color: var(--text-dim); font-family: 'Lora', serif; font-size: .78rem; font-style: italic;
+    cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+  }
 
   /* ---------- Opened letter ---------- */
   .letter-open {
@@ -397,6 +432,13 @@
   #printRoot h1 { font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 2.2rem; text-align: center; margin: 20px 0 4px; color: #2c2236; }
   #printRoot .p-eyebrow { text-align: center; font-size: .7rem; letter-spacing: .26em; text-transform: uppercase; color: #9c7a3c; margin-top: 30px; }
   #printRoot .p-sub { text-align: center; font-family: 'Caveat', cursive; font-size: 1.2rem; color: #5c4f66; margin-bottom: 30px; }
+  #printRoot .p-cover { min-height: 75vh; display: flex; flex-direction: column; justify-content: center; text-align: center; page-break-after: always; }
+  #printRoot .p-cover h1 { font-size: 3rem; }
+  #printRoot .p-range { text-align: center; font-size: .85rem; color: #8a7d94; margin-top: 16px; }
+  #printRoot .p-toc { page-break-after: always; padding-top: 30px; }
+  #printRoot .p-toc h2 { font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 1.7rem; text-align: center; margin-bottom: 20px; }
+  #printRoot .p-toc h3 { font-family: 'Caveat', cursive; font-size: 1.4rem; color: #5c4f66; margin: 18px 0 8px; }
+  #printRoot .p-toc-line { font-size: .95rem; padding: 3px 0; border-bottom: 1px dotted #e3d5bd; }
   #printRoot .p-daughter { page-break-before: always; }
   #printRoot .p-daughter h2 { font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 1.9rem; text-align: center; margin: 40px 0 6px; }
   #printRoot .p-daughter .rule { width: 60px; height: 3px; margin: 0 auto 10px; border-radius: 2px; }
@@ -452,7 +494,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.1.0';
 
 /* ============ Arizona time (no DST — never derive "today" from toISOString) ============ */
 
@@ -499,7 +541,8 @@ const MILESTONES = [
   { id: 'wedding',   when: 'Open on your wedding day',        unlock: { type: 'keeper' } },
   { id: 'parent',    when: 'Open when you become a parent',   unlock: { type: 'keeper' } },
   { id: 'hardday',   when: 'Open on a hard day',              unlock: { type: 'keeper' } },
-  { id: 'missme',    when: 'Open when you miss me',           unlock: { type: 'keeper' } }
+  { id: 'missme',    when: 'Open when you miss me',           unlock: { type: 'keeper' } },
+  { id: 'littlenotes', when: 'Open whenever',                 unlock: { type: 'always' } }
 ];
 
 const WHO_LABEL = { sedona: 'Sedona', river: 'River', both: 'Both girls' };
@@ -634,6 +677,20 @@ function entriesFor(whoKey, msId) {
   );
 }
 
+// Built-in envelopes plus any custom ones (synced 'milestone' records, oldest first)
+function customMilestones() {
+  return Object.values(DB.records)
+    .filter(r => r.type === 'milestone' && !r.deleted)
+    .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')) || (a.updatedAt || 0) - (b.updatedAt || 0));
+}
+
+function allMilestones() { return [...MILESTONES, ...customMilestones()]; }
+
+function getMilestone(id) {
+  return allMilestones().find(m => m.id === id)
+    || { id, when: 'A removed envelope', unlock: { type: 'manual' } };
+}
+
 // commit = local write + schedule sync. Every mutation must set updatedAt (merge depends on it).
 function commit(mutate) {
   mutate(DB.records);
@@ -661,6 +718,8 @@ function unlockRec(w, ms) {
   return (r && !r.deleted) ? r : null;
 }
 
+function isUnlocked(w, m) { return m.unlock.type === 'always' || !!unlockRec(w, m.id); }
+
 function unlockDateFor(w, m) {
   if (m.unlock.type !== 'age') return null;
   const b = birthdate(w);
@@ -683,9 +742,11 @@ function ensureAutoUnlocks() {
   let changed = false;
   const today = AZ.today();
   for (const w of ['sedona', 'river']) {
-    for (const m of MILESTONES) {
-      if (m.unlock.type !== 'age' || unlockRec(w, m.id)) continue;
-      const due = unlockDateFor(w, m);
+    for (const m of allMilestones()) {
+      if (unlockRec(w, m.id)) continue;
+      let due = null;
+      if (m.unlock.type === 'age') due = unlockDateFor(w, m);
+      else if (m.unlock.type === 'date') due = m.unlock.date;
       if (due && today >= due) { writeUnlock(w, m.id, 'auto'); changed = true; }
     }
   }
@@ -698,10 +759,12 @@ function unlockStateText(w, m) {
     const byLabel = { auto: 'on her birthday', keeper: 'by the keeper', author: 'by hand' };
     return 'Unlocked ' + (byLabel[rec.unlockedBy] || '') + ' · ' + AZ.pretty(rec.unlockedAt);
   }
+  if (m.unlock.type === 'always') return 'Never sealed — open whenever';
   if (m.unlock.type === 'age') {
     const due = unlockDateFor(w, m);
     return due ? 'Unlocks on its own · ' + AZ.pretty(due) : 'Unlocks at ' + m.unlock.years + ' — set her birthdate in Settings';
   }
+  if (m.unlock.type === 'date') return 'Unlocks on its own · ' + AZ.pretty(m.unlock.date);
   if (m.unlock.type === 'keeper') return 'Sealed until the keeper decides the moment is right';
   return 'Sealed until you unlock it by hand';
 }
@@ -719,6 +782,7 @@ const Sync = {
     if (!id) throw new Error('NO_GIST');
     const res = await fetch('https://api.github.com/gists/' + id, { headers: this.headers() });
     if (!res.ok) throw new Error('Gist fetch failed: ' + res.status);
+    checkTokenExpiry(res);
     const gist = await res.json();
     const file = gist.files[this.filename];
     if (!file) return { records: {} };
@@ -761,6 +825,7 @@ const Sync = {
       ensureAutoUnlocks();
       setSyncUI('ok');
       render();
+      mirrorBackup();
     } catch (e) {
       setSyncUI('err');
     } finally {
@@ -830,29 +895,78 @@ async function createFreshGist() {
   }
 }
 
+// Once a day, tuck a second copy of the text data into the private media repo —
+// a Gist mishap alone can never erase the book.
+async function mirrorBackup() {
+  if (Store.get('last_mirror') === AZ.today()) return;
+  try {
+    let sha = null;
+    const probe = await fetch('https://api.github.com/repos/' + mediaRepo() + '/contents/backup/data.json', { headers: Sync.headers() });
+    if (probe.ok) sha = (await probe.json()).sha;
+    const res = await fetch('https://api.github.com/repos/' + mediaRepo() + '/contents/backup/data.json', {
+      method: 'PUT',
+      headers: { ...Sync.headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: 'daily backup ' + AZ.today(),
+        content: b64EncodeUtf8(JSON.stringify(DB)),
+        ...(sha ? { sha } : {})
+      })
+    });
+    if (res.ok) Store.set('last_mirror', AZ.today());
+  } catch (e) { /* it's the spare copy — it'll try again tomorrow */ }
+}
+
+function checkTokenExpiry(res) {
+  try {
+    const raw = res.headers.get('github-authentication-token-expiration');
+    if (!raw) return;
+    const exp = new Date(raw.includes('UTC') ? raw.replace(' UTC', 'Z').replace(' ', 'T') : raw);
+    if (isNaN(exp.getTime())) return;
+    const days = Math.floor((exp.getTime() - Date.now()) / 86400000);
+    if (days < 0 || days > 30) return;
+    if (Store.get('exp_warned') === AZ.today()) return;
+    Store.set('exp_warned', AZ.today());
+    toast('Heads up — the GitHub key expires in ' + days + (days === 1 ? ' day' : ' days') + '. Make a fresh one and update Settings.');
+  } catch (e) {}
+}
+
 /* ============ Media (private repo via contents API) ============ */
 
 const mediaRepo = () => Store.get('media_repo', 'ortizzle/open-when-media');
 
-function uploadMedia(path, blob, onProgress) {
+function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('read failed'));
-    reader.onload = () => {
-      const base64 = String(reader.result).split(',')[1];
-      const xhr = new XMLHttpRequest();
-      xhr.open('PUT', 'https://api.github.com/repos/' + mediaRepo() + '/contents/' + path);
-      xhr.setRequestHeader('Authorization', 'Bearer ' + token());
-      xhr.setRequestHeader('Accept', 'application/vnd.github+json');
-      if (xhr.upload && onProgress) {
-        xhr.upload.onprogress = (ev) => { if (ev.lengthComputable) onProgress(ev.loaded / ev.total); };
-      }
-      xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error('upload ' + xhr.status));
-      xhr.onerror = () => reject(new Error('network'));
-      xhr.send(JSON.stringify({ message: 'add ' + path, content: base64 }));
-    };
+    reader.onload = () => resolve(String(reader.result).split(',')[1]);
     reader.readAsDataURL(blob);
   });
+}
+
+function b64EncodeUtf8(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+function ghPutBase64(path, base64, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', 'https://api.github.com/repos/' + mediaRepo() + '/contents/' + path);
+    xhr.setRequestHeader('Authorization', 'Bearer ' + token());
+    xhr.setRequestHeader('Accept', 'application/vnd.github+json');
+    if (xhr.upload && onProgress) {
+      xhr.upload.onprogress = (ev) => { if (ev.lengthComputable) onProgress(ev.loaded / ev.total); };
+    }
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error('upload ' + xhr.status));
+    xhr.onerror = () => reject(new Error('network'));
+    xhr.send(JSON.stringify({ message: 'add ' + path, content: base64 }));
+  });
+}
+
+function uploadMedia(path, blob, onProgress) {
+  return blobToBase64(blob).then(b64 => ghPutBase64(path, b64, onProgress));
 }
 
 // Raw URLs don't work on private repos — fetch via the API with the auth header.
@@ -1004,7 +1118,7 @@ function renderAuthor() {
   if (entries.length) {
     const last = entries.reduce((m, e) => e.createdAt > m ? e.createdAt : m, '0000');
     const days = Math.round((new Date(AZ.today() + 'T12:00:00') - new Date(last + 'T12:00:00')) / 86400000);
-    const empty = MILESTONES.reduce((n, m) =>
+    const empty = allMilestones().filter(m => m.unlock.type !== 'always').reduce((n, m) =>
       n + ['sedona', 'river'].filter(w => entriesFor(w, m.id).length === 0).length, 0);
     const parts = [days === 0 ? 'Last entry: today' : 'Last entry: ' + days + (days === 1 ? ' day ago' : ' days ago')];
     if (empty > 0) parts.push(empty + (empty === 1 ? ' envelope still empty' : ' envelopes still empty'));
@@ -1032,6 +1146,8 @@ function renderAuthor() {
   card.appendChild(el('div', 'prompt-q', qText));
   const ta = document.createElement('textarea');
   ta.placeholder = 'Write it the way you would say it out loud…';
+  ta.value = Store.get('draft_prompt_' + who, '');
+  ta.addEventListener('input', () => Store.set('draft_prompt_' + who, ta.value));
   card.appendChild(ta);
   const actions = el('div', 'prompt-actions');
   const save = el('button', 'btn btn-gold', 'File this answer…');
@@ -1050,15 +1166,33 @@ function renderAuthor() {
   card.appendChild(actions);
   app.appendChild(card);
 
+  // One line tonight — the lowest bar that still counts
+  const qc = el('div', 'quick-card');
+  qc.appendChild(el('div', 'prompt-label', 'One line tonight'));
+  const qrow = el('div', 'quick-row');
+  const qin = document.createElement('input');
+  qin.type = 'text';
+  qin.placeholder = 'Something ' + (who === 'both' ? 'they' : WHO_LABEL[who]) + ' did today, something you felt…';
+  const qbtn = el('button', 'btn btn-ghost', 'Keep it');
+  qbtn.addEventListener('click', () => {
+    if (!qin.value.trim()) { toast('Even one line needs a word or two.'); return; }
+    saveEntry({ kind: 'note', who, milestone: 'littlenotes', body: qin.value.trim() });
+    toast('Kept. Filed under “Open whenever”.');
+    render();
+  });
+  qrow.append(qin, qbtn);
+  qc.appendChild(qrow);
+  app.appendChild(qc);
+
   // Envelope shelf
   const sh = el('div', 'section-h');
   sh.appendChild(el('h2', null, who === 'both' ? 'Envelopes for both girls' : 'Envelopes for ' + WHO_LABEL[who]));
-  const total = MILESTONES.reduce((n, m) => n + entriesFor(who, m.id).length, 0);
+  const total = allMilestones().reduce((n, m) => n + entriesFor(who, m.id).length, 0);
   sh.appendChild(el('span', 'count', total + (total === 1 ? ' entry so far' : ' entries so far')));
   app.appendChild(sh);
 
   const shelf = el('div', 'shelf');
-  MILESTONES.forEach(m => {
+  allMilestones().forEach(m => {
     const count = entriesFor(who, m.id).length;
     const env = el('div', 'envelope w-' + who);
     env.appendChild(el('div', 'flap'));
@@ -1068,11 +1202,87 @@ function renderAuthor() {
     env.addEventListener('click', () => { openMilestone = m.id; render(); });
     shelf.appendChild(env);
   });
+  const addEnv = el('div', 'envelope env-new');
+  addEnv.appendChild(el('div', 'env-new-label', '+ A new envelope'));
+  addEnv.addEventListener('click', openNewEnvelope);
+  shelf.appendChild(addEnv);
   app.appendChild(shelf);
+
+  const mem = memoryFromLastYear();
+  if (mem) {
+    const mc = el('div', 'memory-card');
+    mc.appendChild(el('div', 'prompt-label', 'Around this time last year'));
+    const snip = (mem.title || mem.q || mem.body || '').slice(0, 120);
+    mc.appendChild(el('div', 'mem-snippet', '“' + snip + (snip.length === 120 ? '…' : '') + '”'));
+    mc.appendChild(el('div', 'mem-meta', getMilestone(mem.milestone).when + ' · for ' + WHO_LABEL[mem.who] + ' · tap to revisit'));
+    mc.addEventListener('click', () => { who = mem.who; openMilestone = mem.milestone; render(); });
+    app.appendChild(mc);
+  }
+}
+
+function memoryFromLastYear() {
+  const today = AZ.today();
+  const anchor = new Date((Number(today.slice(0, 4)) - 1) + '-' + today.slice(5) + 'T12:00:00');
+  if (isNaN(anchor.getTime())) return null;
+  let best = null, bestGap = 8;
+  for (const e of activeEntries()) {
+    if (!e.createdAt || Number(e.createdAt.slice(0, 4)) >= Number(today.slice(0, 4))) continue;
+    const d = new Date(e.createdAt + 'T12:00:00');
+    if (isNaN(d.getTime())) continue;
+    const gap = Math.abs(Math.round((d - anchor) / 86400000));
+    if (gap <= 7 && gap < bestGap) { best = e; bestGap = gap; }
+  }
+  return best;
+}
+
+function openNewEnvelope() {
+  showModal({
+    title: 'A new envelope',
+    message: 'Name the moment. It joins the shelf for both girls, like the others.',
+    confirmText: 'Add it', cancelText: 'Cancel',
+    buildBody(box) {
+      box.appendChild(el('label', null, 'The moment'));
+      const name = document.createElement('input');
+      name.type = 'text';
+      name.placeholder = 'Open when… you move out';
+      box.appendChild(name);
+      box.appendChild(el('label', null, 'How it opens'));
+      const sel = document.createElement('select');
+      [['keeper', 'The keeper decides — passphrase'], ['manual', 'By hand — you unseal it'], ['date', 'On a date — it opens itself']].forEach(([v, l]) => {
+        const o = document.createElement('option');
+        o.value = v; o.textContent = l;
+        sel.appendChild(o);
+      });
+      box.appendChild(sel);
+      const dateLabel = el('label', null, 'The date');
+      const date = document.createElement('input');
+      date.type = 'date';
+      dateLabel.hidden = true; date.hidden = true;
+      sel.addEventListener('change', () => {
+        const show = sel.value === 'date';
+        dateLabel.hidden = !show; date.hidden = !show;
+      });
+      box.append(dateLabel, date);
+      return { name, sel, date };
+    },
+    onConfirm(api) {
+      const label = api.name.value.trim();
+      if (!label) { toast('Give the envelope a name first.'); return false; }
+      if (api.sel.value === 'date' && !api.date.value) { toast('Pick the date it should open.'); return false; }
+      const id = 'ms_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
+      const unlock = api.sel.value === 'date' ? { type: 'date', date: api.date.value } : { type: api.sel.value };
+      commit(recs => {
+        recs[id] = { id, type: 'milestone', when: label, unlock, createdAt: AZ.today(), updatedAt: Date.now() };
+      });
+      ensureAutoUnlocks();
+      toast('On the shelf. Start filling it.');
+      render();
+    }
+  });
 }
 
 function renderMilestoneDetail() {
-  const m = MILESTONES.find(x => x.id === openMilestone);
+  const m = getMilestone(openMilestone);
   const back = el('div', 'back-row');
   const bb = el('button', 'back-btn', '← All envelopes');
   bb.addEventListener('click', () => { openMilestone = null; render(); });
@@ -1080,27 +1290,42 @@ function renderMilestoneDetail() {
   app.appendChild(back);
 
   app.appendChild(el('div', 'detail-title', m.when));
-  app.appendChild(el('div', 'detail-sub', 'For ' + WHO_LABEL[who] + ' · sealed until the day comes'));
+  app.appendChild(el('div', 'detail-sub', 'For ' + WHO_LABEL[who] +
+    (m.unlock.type === 'always' ? ' · never sealed — open whenever' : ' · sealed until the day comes')));
 
   // Unlock status + manual unlock (per girl; the 'both' tab is an authoring view only)
-  const girls = who === 'both' ? ['sedona', 'river'] : [who];
-  const un = el('div', 'unlock-row');
-  girls.forEach(g => {
-    un.appendChild(el('span', 'state', (who === 'both' ? WHO_LABEL[g] + ': ' : '') + unlockStateText(g, m)));
-    if (!unlockRec(g, m.id)) {
-      const b = el('button', 'unlock-btn', 'Break the seal for ' + WHO_LABEL[g] + ' now');
-      b.addEventListener('click', () => {
+  if (m.unlock.type !== 'always') {
+    const girls = who === 'both' ? ['sedona', 'river'] : [who];
+    const un = el('div', 'unlock-row');
+    girls.forEach(g => {
+      un.appendChild(el('span', 'state', (who === 'both' ? WHO_LABEL[g] + ': ' : '') + unlockStateText(g, m)));
+      if (!unlockRec(g, m.id)) {
+        const b = el('button', 'unlock-btn', 'Break the seal for ' + WHO_LABEL[g] + ' now');
+        b.addEventListener('click', () => {
+          showModal({
+            title: 'Break the seal?',
+            message: 'This unlocks “' + m.when + '” for ' + WHO_LABEL[g] + ' on every device, starting now. It syncs like everything else.',
+            confirmText: 'Unlock it', cancelText: 'Not yet',
+            onConfirm() { writeUnlock(g, m.id, 'author'); toast('Unsealed for ' + WHO_LABEL[g] + '.'); render(); }
+          });
+        });
+        un.appendChild(b);
+      }
+    });
+    if (m.type === 'milestone' && activeEntries().filter(e => e.milestone === m.id).length === 0) {
+      const rm = el('button', 'unlock-btn', 'Remove this envelope');
+      rm.addEventListener('click', () => {
         showModal({
-          title: 'Break the seal?',
-          message: 'This unlocks “' + m.when + '” for ' + WHO_LABEL[g] + ' on every device, starting now. It syncs like everything else.',
-          confirmText: 'Unlock it', cancelText: 'Not yet',
-          onConfirm() { writeUnlock(g, m.id, 'author'); toast('Unsealed for ' + WHO_LABEL[g] + '.'); render(); }
+          title: 'Remove this envelope?',
+          message: 'It’s empty, so nothing is lost. It disappears from every device.',
+          confirmText: 'Remove it', cancelText: 'Keep it', danger: true,
+          onConfirm() { tombstone(m.id); openMilestone = null; toast('Envelope removed.'); render(); }
         });
       });
-      un.appendChild(b);
+      un.appendChild(rm);
     }
-  });
-  app.appendChild(un);
+    app.appendChild(un);
+  }
 
   const list = entriesFor(who, m.id);
   if (list.length === 0) {
@@ -1123,7 +1348,7 @@ function renderMilestoneDetail() {
 
 function entryCard(e, editable) {
   const c = el('div', 'entry-card' + (e.author === 'kat' ? ' by-kat' : ''));
-  const typeMap = { letter: ['t-letter', 'Letter'], answer: ['t-answer', 'Q & A'], photo: ['t-photo', 'Photo story'], voice: ['t-voice', 'Voice note'] };
+  const typeMap = { letter: ['t-letter', 'Letter'], answer: ['t-answer', 'Q & A'], photo: ['t-photo', 'Photo story'], voice: ['t-voice', 'Voice note'], note: ['t-note', 'Little note'] };
   const [cls, label] = typeMap[e.kind] || ['t-letter', 'Letter'];
   c.appendChild(el('span', 'entry-type ' + cls, label));
 
@@ -1232,7 +1457,7 @@ function openFilePicker(question, answer) {
     confirmText: 'Seal it', cancelText: 'Cancel',
     buildBody(box) {
       const sel = document.createElement('select');
-      MILESTONES.forEach(m => {
+      allMilestones().forEach(m => {
         const o = document.createElement('option');
         o.value = m.id; o.textContent = m.when;
         sel.appendChild(o);
@@ -1243,6 +1468,7 @@ function openFilePicker(question, answer) {
     onConfirm(api) {
       saveEntry({ kind: 'answer', who, milestone: api.sel.value, q: question, body: answer });
       promptIdx++; promptOverride = null; Store.set('prompt_idx', promptIdx);
+      Store.remove('draft_prompt_' + who);
       toast('Sealed. ' + WHO_LABEL[who] + ' will read it one day.');
       render();
     }
@@ -1289,17 +1515,24 @@ function openCompose(type, milestone) {
         box.appendChild(el('label', null, 'The story, and why it matters'));
         const body = document.createElement('textarea');
         body.placeholder = 'What was happening, and why you should know about it…';
+        const draftKey = 'draft_photo_' + milestone.id + '_' + who;
+        body.value = Store.get(draftKey, '');
+        body.addEventListener('input', () => Store.set(draftKey, body.value));
         box.appendChild(body);
-        return { title, caption, body };
+        return { title, caption, body, draftKey };
       }
       box.appendChild(el('label', null, 'The letter'));
       const body = document.createElement('textarea');
       body.placeholder = 'Write it the way you would say it out loud…';
+      const draftKey = 'draft_letter_' + milestone.id + '_' + who;
+      body.value = Store.get(draftKey, '');
+      body.addEventListener('input', () => Store.set(draftKey, body.value));
       box.appendChild(body);
-      return { title, body };
+      return { title, body, draftKey };
     },
     onConfirm(api) {
       if (!api.body.value.trim()) { toast('Write a little something first.'); return false; }
+      Store.remove(api.draftKey);
       const entry = saveEntry({
         kind: type, who, milestone: milestone.id,
         title: api.title.value.trim() || (isPhoto ? 'Untitled photo' : 'Untitled letter'),
@@ -1322,7 +1555,7 @@ function openCompose(type, milestone) {
 function openEdit(e) {
   showModal({
     title: 'Edit this entry',
-    message: MILESTONES.find(m => m.id === e.milestone).when + ' · for ' + WHO_LABEL[e.who],
+    message: getMilestone(e.milestone).when + ' · for ' + WHO_LABEL[e.who],
     confirmText: 'Save it', cancelText: 'Cancel',
     buildBody(box) {
       let title = null, caption = null;
@@ -1469,6 +1702,23 @@ function openVoiceRecorder(milestone) {
 function renderReaderShelf(isRealReader) {
   app.textContent = '';
 
+  // The welcome note greets them before anything else, once
+  const w = DB.records['welcome'];
+  const hasWelcome = !!(w && !w.deleted && w.body);
+  if (hasWelcome && !Store.get('welcome_seen')) {
+    const L = el('div', 'letter-open');
+    L.appendChild(el('div', 'salutation', 'Before anything else —'));
+    L.appendChild(el('div', 'body', w.body));
+    L.appendChild(el('div', 'sig' + (w.author === 'kat' ? ' by-kat' : ''), '— ' + (AUTHOR_LABEL[w.author] || 'Dad')));
+    const okBtn = el('button', 'unlock-btn', 'I’ve read it — show me the envelopes');
+    okBtn.style.display = 'block';
+    okBtn.style.margin = '18px auto 0';
+    okBtn.addEventListener('click', () => { Store.set('welcome_seen', true); render(); });
+    L.appendChild(okBtn);
+    app.appendChild(L);
+    return;
+  }
+
   const tabs = el('div', 'tabs');
   ['sedona', 'river'].forEach(k => {
     const b = el('button', 'tab' + (who === k ? ' active' : ''), (isRealReader ? '' : 'As ') + WHO_LABEL[k]);
@@ -1480,15 +1730,21 @@ function renderReaderShelf(isRealReader) {
 
   if (openMilestone) { renderReaderOpen(); return; }
 
+  if (hasWelcome) {
+    const again = el('button', 'link-btn', 'read the welcome note again');
+    again.addEventListener('click', () => { Store.remove('welcome_seen'); render(); });
+    app.appendChild(again);
+  }
+
   const sh = el('div', 'section-h');
   sh.appendChild(el('h2', null, 'Letters from Mom & Dad'));
-  const unlockedCount = MILESTONES.filter(m => unlockRec(who, m.id)).length;
-  sh.appendChild(el('span', 'count', unlockedCount + ' of ' + MILESTONES.length + ' unlocked'));
+  const unlockedCount = allMilestones().filter(m => isUnlocked(who, m)).length;
+  sh.appendChild(el('span', 'count', unlockedCount + ' of ' + allMilestones().length + ' unlocked'));
   app.appendChild(sh);
 
   const shelf = el('div', 'shelf');
-  MILESTONES.forEach(m => {
-    const unlocked = !!unlockRec(who, m.id);
+  allMilestones().forEach(m => {
+    const unlocked = isUnlocked(who, m);
     const opened = openedSeals.has(who + ':' + m.id);
     const env = el('div', 'envelope w-' + who + (opened ? ' opened' : ''));
     env.appendChild(el('div', 'flap'));
@@ -1500,8 +1756,8 @@ function renderReaderShelf(isRealReader) {
     env.addEventListener('click', () => {
       if (unlocked) { crackAndOpen(seal, m); return; }
       if (m.unlock.type === 'keeper' && isRealReader) { openKeeperUnlock(m, seal); return; }
-      if (m.unlock.type === 'age') {
-        const due = unlockDateFor(who, m);
+      if (m.unlock.type === 'age' || m.unlock.type === 'date') {
+        const due = m.unlock.type === 'age' ? unlockDateFor(who, m) : m.unlock.date;
         toast(due
           ? 'Still sealed. This one opens ' + AZ.pretty(due) + '.'
           : 'Still sealed. This one opens for a day that has not come yet.');
@@ -1555,7 +1811,7 @@ function openKeeperUnlock(m, seal) {
 }
 
 function renderReaderOpen() {
-  const m = MILESTONES.find(x => x.id === openMilestone);
+  const m = getMilestone(openMilestone);
   const back = el('div', 'back-row');
   const bb = el('button', 'back-btn', '← All letters');
   bb.addEventListener('click', () => { openMilestone = null; render(); });
@@ -1569,7 +1825,29 @@ function renderReaderOpen() {
     app.appendChild(el('p', 'detail-sub', 'This envelope is empty. Maybe the next one isn’t.'));
     return;
   }
+
+  // When Mom and Dad both answered the same question, their answers appear together.
+  const groups = new Map();
   list.forEach(e => {
+    if (e.kind !== 'answer' || !e.q) return;
+    const k = e.q.trim().toLowerCase();
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  });
+  const paired = new Set();
+  groups.forEach(g => {
+    if (new Set(g.map(x => x.author || 'chris')).size > 1) g.forEach(x => paired.add(x.id));
+  });
+
+  const shown = new Set();
+  list.forEach(e => {
+    if (paired.has(e.id)) {
+      const k = e.q.trim().toLowerCase();
+      if (shown.has(k)) return;
+      shown.add(k);
+      app.appendChild(answerPairCard(groups.get(k)));
+      return;
+    }
     if (e.kind === 'letter') {
       const L = el('div', 'letter-open');
       L.appendChild(el('div', 'salutation', 'Dear ' + (e.who === 'both' ? 'girls' : WHO_LABEL[e.who]) + ','));
@@ -1580,6 +1858,19 @@ function renderReaderOpen() {
       app.appendChild(entryCard(e, false));
     }
   });
+}
+
+function answerPairCard(group) {
+  const c = el('div', 'entry-card');
+  c.appendChild(el('span', 'entry-type t-answer', 'Q & A — both of us'));
+  c.appendChild(el('div', 'entry-q', '“' + group[0].q + '”'));
+  group.forEach(e => {
+    c.appendChild(el('div', 'pair-author' + (e.author === 'kat' ? ' by-kat-text' : ''), (AUTHOR_LABEL[e.author] || 'Dad') + ' says —'));
+    c.appendChild(el('div', 'entry-body', e.body));
+  });
+  c.appendChild(el('div', 'entry-date',
+    'For ' + WHO_LABEL[group[0].who] + ' · answered ' + [...new Set(group.map(e => AZ.monthYear(e.createdAt)))].join(' & ')));
+  return c;
 }
 
 /* ============ Claude prompt (optional — the app never needs it) ============ */
@@ -1696,9 +1987,18 @@ function openSettings() {
         box.appendChild(anthropic);
 
         box.appendChild(document.createElement('hr')).className = 'settings-sep';
-        const exp = el('button', 'settings-action', '⬇ Download the archive (everything, as JSON)');
+        const exp = el('button', 'settings-action', '⬇ Backup — the words (light JSON)');
         exp.addEventListener('click', exportArchive);
         box.appendChild(exp);
+        const expAll = el('button', 'settings-action', '⬇ Backup — everything, photos & voice included');
+        expAll.addEventListener('click', exportBundle);
+        box.appendChild(expAll);
+        const imp = el('button', 'settings-action', '⟲ Restore from a backup file');
+        imp.addEventListener('click', importArchive);
+        box.appendChild(imp);
+        const wn = el('button', 'settings-action', '✉ The welcome note — what greets the girls first');
+        wn.addEventListener('click', openWelcomeNote);
+        box.appendChild(wn);
         const pr = el('button', 'settings-action', '🖨 Print edition — every letter on paper');
         pr.addEventListener('click', () => { openPrintEdition(); });
         box.appendChild(pr);
@@ -1747,16 +2047,155 @@ function openSettings() {
 
 /* ============ Exports ============ */
 
-function exportArchive() {
-  const payload = { app: 'open-when', version: APP_VERSION, exportedAt: new Date().toISOString(), records: DB.records };
+function downloadJson(payload, filename) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'open-when-archive-' + AZ.today() + '.json';
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
+}
+
+function exportArchive() {
+  downloadJson(
+    { app: 'open-when', version: APP_VERSION, exportedAt: new Date().toISOString(), records: DB.records },
+    'open-when-archive-' + AZ.today() + '.json'
+  );
   toast('Archive saved. Keep a copy somewhere that isn’t a phone.');
+}
+
+function mediaPathsInUse() {
+  const paths = [];
+  for (const e of activeEntries()) {
+    if (e.media && e.media.path) paths.push(e.media.path);
+    if (Array.isArray(e.photos)) e.photos.forEach(p => p && p.path && paths.push(p.path));
+  }
+  return [...new Set(paths)];
+}
+
+// The real "if anything happens" backup: photos and voice included, one file.
+async function exportBundle() {
+  const paths = mediaPathsInUse();
+  toast(paths.length ? 'Packing ' + paths.length + ' photos & recordings — hold on…' : 'Packing up…');
+  const media = {}; const missing = [];
+  for (const p of paths) {
+    try {
+      const res = await fetch('https://api.github.com/repos/' + mediaRepo() + '/contents/' + p, {
+        headers: { 'Authorization': 'Bearer ' + token(), 'Accept': 'application/vnd.github.raw+json' }
+      });
+      if (!res.ok) throw new Error(res.status);
+      media[p] = await blobToBase64(await res.blob());
+    } catch (e) { missing.push(p); }
+  }
+  const payload = {
+    app: 'open-when', kind: 'bundle', version: APP_VERSION,
+    exportedAt: new Date().toISOString(), records: DB.records, media,
+    ...(missing.length ? { missing } : {})
+  };
+  downloadJson(payload, 'open-when-bundle-' + AZ.today() + '.json');
+  toast(missing.length
+    ? 'Bundle saved — ' + missing.length + ' media file(s) couldn’t be fetched.'
+    : 'Bundle saved. The whole book, one file.');
+}
+
+function countRecords(records) {
+  const vals = Object.values(records).filter(v => v && typeof v === 'object');
+  return {
+    entries: vals.filter(v => v.type === 'entry' && !v.deleted).length,
+    unlocks: vals.filter(v => v.type === 'unlock' && !v.deleted).length,
+    envelopes: vals.filter(v => v.type === 'milestone' && !v.deleted).length
+  };
+}
+
+function importArchive() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,application/json';
+  input.addEventListener('change', () => {
+    const f = input.files[0];
+    if (!f) return;
+    f.text().then(t => {
+      let payload;
+      try { payload = JSON.parse(t); } catch (e) { toast('That file isn’t a readable backup.'); return; }
+      if (!payload || typeof payload.records !== 'object' || !payload.records) {
+        toast('That file isn’t an Open When backup.'); return;
+      }
+      const clean = {};
+      for (const [k, v] of Object.entries(payload.records)) {
+        if (v && typeof v === 'object' && v.id) clean[k] = v;
+      }
+      const c = countRecords(clean);
+      const mediaCount = payload.media ? Object.keys(payload.media).length : 0;
+      showModal({
+        title: 'Restore from this backup?',
+        message: 'It holds ' + c.entries + ' entries, ' + c.unlocks + ' unlocks'
+          + (c.envelopes ? ', ' + c.envelopes + ' custom envelopes' : '')
+          + (mediaCount ? ', ' + mediaCount + ' media files' : '')
+          + '. Restoring merges — for each record the newest version wins, so nothing newer on this phone gets overwritten.',
+        confirmText: 'Restore', cancelText: 'Cancel',
+        onConfirm() {
+          DB = Sync.merge(DB, { records: clean });
+          Store.set('data', DB);
+          ensureAutoUnlocks();
+          scheduleSync();
+          render();
+          toast('Restored.');
+          if (mediaCount) offerMediaReupload(payload.media);
+        }
+      });
+    }).catch(() => toast('Couldn’t read that file.'));
+  });
+  input.click();
+}
+
+function offerMediaReupload(media) {
+  const paths = Object.keys(media);
+  showModal({
+    title: 'Put the photos & recordings back too?',
+    message: 'This bundle carries ' + paths.length + ' media files. I can upload them back into the media repo — anything already there is left alone.',
+    confirmText: 'Upload them', cancelText: 'Skip',
+    onConfirm() {
+      (async () => {
+        let done = 0, skipped = 0, failed = 0;
+        for (const p of paths) {
+          try { await ghPutBase64(p, media[p]); done++; }
+          catch (e) { if (String(e.message).includes('422')) skipped++; else failed++; }
+        }
+        toast('Media restored — ' + done + ' uploaded'
+          + (skipped ? ', ' + skipped + ' already there' : '')
+          + (failed ? ', ' + failed + ' failed' : '') + '.');
+        render();
+      })();
+    }
+  });
+}
+
+function openWelcomeNote() {
+  const w = DB.records['welcome'];
+  showModal({
+    title: 'The welcome note',
+    message: 'The very first thing the girls see when the book opens for them — before any envelope.',
+    confirmText: 'Save it', cancelText: 'Cancel',
+    buildBody(box) {
+      const ta = document.createElement('textarea');
+      ta.style.minHeight = '160px';
+      ta.placeholder = 'Girls — if you’re reading this…';
+      ta.value = (w && !w.deleted && w.body) || '';
+      box.appendChild(ta);
+      return { ta };
+    },
+    onConfirm(api) {
+      if (!api.ta.value.trim()) { toast('Write a little something first.'); return false; }
+      commit(recs => {
+        recs['welcome'] = {
+          id: 'welcome', type: 'welcome', body: api.ta.value.trim(),
+          author: role() === 'kat' ? 'kat' : 'chris', updatedAt: Date.now()
+        };
+      });
+      toast('Saved. It will greet them first.');
+    }
+  });
 }
 
 function enterPrintMode(build) {
@@ -1783,9 +2222,32 @@ function openPrintEdition() {
   toast('Laying out the pages…');
   const imgJobs = [];
   enterPrintMode(root => {
-    root.appendChild(el('div', 'p-eyebrow', 'A time capsule'));
-    root.appendChild(el('h1', null, 'Open When'));
-    root.appendChild(el('div', 'p-sub', 'letters for Sedona & River, from Mom & Dad · printed ' + AZ.pretty(AZ.today())));
+    const cover = el('div', 'p-cover');
+    cover.appendChild(el('div', 'p-eyebrow', 'A time capsule'));
+    cover.appendChild(el('h1', null, 'Open When'));
+    cover.appendChild(el('div', 'p-sub', 'letters for Sedona & River, from Mom & Dad'));
+    const everything = activeEntries();
+    if (everything.length) {
+      const dates = everything.map(e => e.createdAt).filter(Boolean).sort();
+      cover.appendChild(el('div', 'p-range',
+        'written ' + AZ.monthYear(dates[0]) + ' — ' + AZ.monthYear(dates[dates.length - 1]) +
+        ' · ' + everything.length + (everything.length === 1 ? ' entry' : ' entries') +
+        ' · printed ' + AZ.pretty(AZ.today())));
+    }
+    root.appendChild(cover);
+
+    const toc = el('div', 'p-toc');
+    toc.appendChild(el('h2', null, 'What’s inside'));
+    ['sedona', 'river'].forEach(g => {
+      const sec = el('div');
+      sec.appendChild(el('h3', null, 'For ' + WHO_LABEL[g]));
+      allMilestones().forEach(m => {
+        const n = entriesFor(g, m.id).length;
+        if (n) sec.appendChild(el('div', 'p-toc-line', m.when + ' — ' + n + (n === 1 ? ' entry' : ' entries')));
+      });
+      toc.appendChild(sec);
+    });
+    root.appendChild(toc);
 
     ['sedona', 'river'].forEach(g => {
       const d = el('div', 'p-daughter');
@@ -1794,7 +2256,7 @@ function openPrintEdition() {
       rule.style.background = g === 'sedona' ? '#c05b3d' : '#4f8fa3';
       d.appendChild(rule);
       let any = false;
-      MILESTONES.forEach(m => {
+      allMilestones().forEach(m => {
         const list = entriesFor(g, m.id);
         if (!list.length) return;
         any = true;
@@ -1866,7 +2328,8 @@ document.addEventListener('visibilitychange', () => {
 window.__ow = {
   merge: (a, b) => Sync.merge(a, b),
   records: () => DB.records,
-  unlockDateFor: (w, msId) => unlockDateFor(w, MILESTONES.find(m => m.id === msId)),
+  unlockDateFor: (w, msId) => unlockDateFor(w, getMilestone(msId)),
+  milestones: () => allMilestones(),
   az: AZ
 };
 
