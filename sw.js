@@ -10,7 +10,7 @@
  * Bump CACHE on any shell-file change so returning phones pick up new code
  * instead of a stale cache. Keep it in step with APP_VERSION in index.html.
  */
-const CACHE = 'open-when-v1.1.0';
+const CACHE = 'open-when-v1.1.1';
 const SHELL = [
   './',
   './index.html',
@@ -31,11 +31,51 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Navigations race the network against this timer. Without it, a flaky
+// connection (reachable but silent) leaves the launch hanging on a splash
+// screen for 30s+; with it, the cached shell takes over and the network
+// response still lands in the cache for the next launch.
+const NAV_TIMEOUT_MS = 3500;
+
+function cachedShell(req) {
+  return caches.match(req, { ignoreSearch: true }).then((hit) => hit || caches.match('./index.html'));
+}
+
+function navFetch(req) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      cachedShell(req).then((hit) => {
+        if (hit && !settled) { settled = true; resolve(hit); }
+        // no cache yet (first-ever visit): keep waiting on the network
+      });
+    }, NAV_TIMEOUT_MS);
+    fetch(req).then((res) => {
+      clearTimeout(timer);
+      if (res && res.ok) {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy));
+      }
+      if (!settled) { settled = true; resolve(res); }
+    }).catch(() => {
+      clearTimeout(timer);
+      cachedShell(req).then((hit) => {
+        if (!settled) { settled = true; resolve(hit || Response.error()); }
+      });
+    });
+  });
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  // Only ever touch same-origin GETs. Everything else (APIs, fonts) passes
-  // straight through untouched.
+  // Only ever touch same-origin GETs. Everything else (the Gist/media/Claude
+  // APIs, fonts) passes straight through untouched.
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+
+  if (req.mode === 'navigate') {
+    event.respondWith(navFetch(req));
+    return;
+  }
 
   event.respondWith(
     fetch(req)
@@ -46,6 +86,6 @@ self.addEventListener('fetch', (event) => {
         }
         return res;
       })
-      .catch(() => caches.match(req).then((hit) => hit || caches.match('./index.html')))
+      .catch(() => caches.match(req, { ignoreSearch: true }).then((hit) => hit || caches.match('./index.html')))
   );
 });
