@@ -240,7 +240,7 @@
   .t-answer { background: var(--both-wax); }
   .t-photo { background: var(--river-wax); }
   .t-voice { background: #7a6a3a; }
-  .entry-title { font-family: 'Instrument Serif', serif; font-size: 1.3rem; margin-bottom: 6px; }
+  .entry-title { font-family: 'Instrument Serif', serif; font-size: 1.45rem; margin-bottom: 6px; letter-spacing: .01em; }
   .entry-q { font-style: italic; color: var(--ink-soft); font-size: .92rem; margin-bottom: 8px; }
   .entry-body { font-size: .96rem; line-height: 1.55; white-space: pre-line; }
   .entry-date { font-size: .72rem; color: var(--ink-soft); margin-top: 12px; }
@@ -452,7 +452,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
 
 /* ============ Arizona time (no DST — never derive "today" from toISOString) ============ */
 
@@ -504,6 +504,8 @@ const MILESTONES = [
 
 const WHO_LABEL = { sedona: 'Sedona', river: 'River', both: 'Both girls' };
 const AUTHOR_LABEL = { chris: 'Dad', kat: 'Mom' };
+const WHO_WAX = { sedona: 'var(--sedona-wax)', river: 'var(--river-wax)', both: 'var(--both-wax)' };
+const WHO_WAX_HEX = { sedona: '#9c3f24', river: '#2f6577', both: '#6b5390' };
 
 const PROMPTS = [
   // Who she is now
@@ -1175,11 +1177,15 @@ function entryCard(e, editable) {
     }
   }
 
-  if (e.title) c.appendChild(el('div', 'entry-title', e.title));
+  if (e.title) {
+    const t = el('div', 'entry-title', e.title);
+    t.style.color = WHO_WAX[e.who] || 'var(--sedona-wax)';
+    c.appendChild(t);
+  }
   if (e.q) c.appendChild(el('div', 'entry-q', '“' + e.q + '”'));
   if (e.body) c.appendChild(el('div', 'entry-body', e.body));
   c.appendChild(el('div', 'entry-date',
-    'Written ' + AZ.monthYear(e.createdAt) + ' · for ' + WHO_LABEL[e.who] + ' · from ' + (AUTHOR_LABEL[e.author] || 'Dad')));
+    'Written ' + AZ.pretty(e.createdAt) + ' · for ' + WHO_LABEL[e.who] + ' · from ' + (AUTHOR_LABEL[e.author] || 'Dad')));
 
   if (editable) {
     const actions = el('div', 'entry-actions');
@@ -1802,11 +1808,15 @@ function openPrintEdition() {
             imgJobs.push(fetchMedia(e.media.path).then(u => { img.src = u; }).catch(() => img.remove()));
             card.appendChild(img);
           }
-          if (e.title) card.appendChild(el('div', 'p-title', e.title));
+          if (e.title) {
+            const pt = el('div', 'p-title', e.title);
+            pt.style.color = WHO_WAX_HEX[e.who] || '#9c3f24';
+            card.appendChild(pt);
+          }
           if (e.q) card.appendChild(el('div', 'p-q', '“' + e.q + '”'));
           if (e.kind === 'voice') card.appendChild(el('div', 'p-q', 'A voice note lives in the app for this one' + (e.media && e.media.duration ? ' (' + fmtDur(e.media.duration) + ')' : '') + '.'));
           if (e.body) card.appendChild(el('div', 'p-body', e.body));
-          card.appendChild(el('div', 'p-meta', 'Written ' + AZ.monthYear(e.createdAt) + ' · from ' + (AUTHOR_LABEL[e.author] || 'Dad')));
+          card.appendChild(el('div', 'p-meta', 'Written ' + AZ.pretty(e.createdAt) + ' · from ' + (AUTHOR_LABEL[e.author] || 'Dad')));
           ms.appendChild(card);
         });
         d.appendChild(ms);
