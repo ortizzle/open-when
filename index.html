@@ -168,11 +168,17 @@
   @media (max-width: 380px) { .shelf { grid-template-columns: 1fr; } }
 
   .envelope {
-    position: relative; border-radius: 10px; cursor: pointer;
+    position: relative; border-radius: 10px; cursor: pointer; overflow: hidden;
     background: linear-gradient(175deg, var(--paper) 0%, var(--paper-dim) 100%);
     color: var(--ink); padding: 44px 14px 14px; min-height: 128px;
     box-shadow: 0 6px 18px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.4);
     transition: transform .15s;
+  }
+  .seal svg { width: 21px; height: 21px; }
+  .env-ribbon {
+    position: absolute; top: 10px; left: -18px; width: 74px; height: 8px;
+    transform: rotate(-45deg); box-shadow: 0 1px 2px rgba(0,0,0,.25);
+    opacity: .85; z-index: 3; pointer-events: none;
   }
   .envelope:active { transform: scale(.97); }
   .envelope .flap {
@@ -211,6 +217,41 @@
   .env-status.ready { color: var(--sedona-wax); font-weight: 600; }
 
   /* ---------- Milestone detail / entry list ---------- */
+  #app { position: relative; }
+  .detail-wash {
+    position: absolute; top: -10px; left: -18px; right: -18px; height: 340px;
+    pointer-events: none; z-index: -1;
+  }
+  .detail-ribbon {
+    position: absolute; top: 2px; left: -26px; width: 110px; height: 9px;
+    transform: rotate(-45deg); box-shadow: 0 1px 3px rgba(0,0,0,.3);
+    opacity: .9; pointer-events: none;
+  }
+  .detail-watermark {
+    position: absolute; top: 60px; right: -4px; width: 120px; height: 120px;
+    opacity: .14; z-index: -1; pointer-events: none;
+  }
+  .detail-watermark svg { width: 100%; height: 100%; }
+  .detail-seal {
+    width: 46px; height: 46px; border-radius: 50%; margin: 2px auto 10px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 3px 7px rgba(0,0,0,.4), inset 0 -2px 4px rgba(0,0,0,.3), inset 0 2px 4px rgba(255,255,255,.25);
+  }
+  .detail-seal.w-sedona { background: radial-gradient(circle at 35% 30%, #c26545, var(--sedona-wax)); }
+  .detail-seal.w-river { background: radial-gradient(circle at 35% 30%, #5f9cb0, var(--river-wax)); }
+  .detail-seal.w-both { background: radial-gradient(circle at 35% 30%, #9a7fc0, var(--both-wax)); }
+  .detail-seal svg { width: 26px; height: 26px; }
+  .accent-rule { width: 52px; height: 2.5px; border-radius: 2px; margin: 8px auto 10px; }
+
+  .motif-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+  .motif-pick {
+    width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--night-3);
+    background: rgba(0,0,0,.2); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .motif-pick svg { width: 26px; height: 26px; }
+  .motif-pick.sel { border-color: var(--gold); background: rgba(201,163,92,.12); }
+
   .back-row { margin: 14px 0 10px; }
   .back-btn {
     background: none; border: none; color: var(--gold); font-family: 'Lora', serif;
@@ -512,7 +553,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 
 /* ============ Arizona time (no DST — never derive "today" from toISOString) ============ */
 
@@ -567,6 +608,119 @@ const WHO_LABEL = { sedona: 'Sedona', river: 'River', both: 'Both girls' };
 const AUTHOR_LABEL = { chris: 'Dad', kat: 'Mom' };
 const WHO_WAX = { sedona: 'var(--sedona-wax)', river: 'var(--river-wax)', both: 'var(--both-wax)' };
 const WHO_WAX_HEX = { sedona: '#9c3f24', river: '#2f6577', both: '#6b5390' };
+
+/* ---------- Envelope motifs (line art, 48x48) ---------- */
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const MOTIFS = {
+  n13: [{ t: 'text', s: '13' }],
+  n16: [{ t: 'text', s: '16' }],
+  n18: [{ t: 'text', s: '18' }],
+  cap: [
+    { t: 'polygon', points: '24,10 41,17 24,24 7,17' },
+    { t: 'path', d: 'M15 20 v7 c0 3 4.5 5 9 5 s9 -2 9 -5 v-7' },
+    { t: 'path', d: 'M41 17 v10' }, { t: 'circle', cx: 41, cy: 30, r: 2.4 }
+  ],
+  heart: [
+    { t: 'path', d: 'M24 40 C 11 31, 7 19, 15 13.5 C 20 10.4, 24 14, 24 17.5 C 24 14, 28 10.4, 33 13.5 C 41 19, 37 31, 24 40 Z' },
+    { t: 'path', d: 'M24 15 l-2.4 5.5 4.4 4.5 -3.6 4.5 2 5.5' },
+    { t: 'path', d: 'M20 19 l4.5 2.5 M24.5 26.5 l-4 2 M21 33 l4.5 2', thin: true }
+  ],
+  rings: [
+    { t: 'circle', cx: 18.5, cy: 27, r: 9 }, { t: 'circle', cx: 29.5, cy: 27, r: 9 },
+    { t: 'path', d: 'M16 15 l2.5 -4 2.5 4 -2.5 3 z' }
+  ],
+  feet: [
+    { t: 'g', tr: 'rotate(-14 17 25)', kids: [
+      { t: 'ellipse', cx: 17, cy: 27, rx: 4.2, ry: 6.5 },
+      { t: 'circle', cx: 13.5, cy: 18.5, r: 1.1 }, { t: 'circle', cx: 16.5, cy: 17.2, r: 1.1 }, { t: 'circle', cx: 19.6, cy: 17.8, r: 1.1 }] },
+    { t: 'g', tr: 'rotate(14 31 32)', kids: [
+      { t: 'ellipse', cx: 31, cy: 33, rx: 4.2, ry: 6.5 },
+      { t: 'circle', cx: 28, cy: 24.6, r: 1.1 }, { t: 'circle', cx: 31, cy: 23.4, r: 1.1 }, { t: 'circle', cx: 34, cy: 24, r: 1.1 }] }
+  ],
+  umbrella: [
+    { t: 'path', d: 'M8 22 a16 16 0 0 1 32 0' },
+    { t: 'path', d: 'M8 22 q4 3 8 0 q4 3 8 0 q4 3 8 0 q4 3 8 0' },
+    { t: 'path', d: 'M24 8 v-3 M24 23 v14 q0 4 -3.5 4 t-3.5 -3' }
+  ],
+  plane: [
+    { t: 'path', d: 'M6 26 L42 10 L31 40 L25 29 Z' },
+    { t: 'path', d: 'M42 10 L25 29' },
+    { t: 'path', d: 'M10 36 q3 -2 6 -1 M14 41 q4 -2.5 7.5 -1.5', thin: true }
+  ],
+  sparkles: [
+    { t: 'path', d: 'M17 10 l1.6 5.4 5.4 1.6 -5.4 1.6 -1.6 5.4 -1.6 -5.4 -5.4 -1.6 5.4 -1.6 z' },
+    { t: 'path', d: 'M33 20 l1.3 4.2 4.2 1.3 -4.2 1.3 -1.3 4.2 -1.3 -4.2 -4.2 -1.3 4.2 -1.3 z' },
+    { t: 'path', d: 'M20 30 l1 3.4 3.4 1 -3.4 1 -1 3.4 -1 -3.4 -3.4 -1 3.4 -1 z' }
+  ],
+  star: [{ t: 'path', d: 'M24 7 l3.2 11.8 11.8 3.2 -11.8 3.2 -3.2 11.8 -3.2 -11.8 -11.8 -3.2 11.8 -3.2 z' }]
+};
+const MOTIF_ACCENT = {
+  n13: '#c9a35c', n16: '#c9a35c', n18: '#c9a35c', cap: '#6b5390', heart: '#9c3f24',
+  rings: '#c98ba3', feet: '#5d7a52', umbrella: '#2f6577', plane: '#8a6fae',
+  sparkles: '#c9a35c', star: '#c9a35c'
+};
+const BUILTIN_MOTIF = {
+  turn13: 'n13', turn16: 'n16', turn18: 'n18', graduate: 'cap', heartbreak: 'heart',
+  wedding: 'rings', parent: 'feet', hardday: 'umbrella', missme: 'plane', littlenotes: 'sparkles'
+};
+
+function motifOf(m) { return m.type === 'milestone' ? (m.motif || 'star') : (BUILTIN_MOTIF[m.id] || 'star'); }
+function accentOf(m) { return MOTIF_ACCENT[motifOf(m)] || '#c9a35c'; }
+
+function motifSvg(motifId, stroke, sw) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 48 48');
+  const build = (spec, parent) => {
+    if (spec.t === 'text') {
+      const t = document.createElementNS(SVG_NS, 'text');
+      t.setAttribute('x', '24'); t.setAttribute('y', '33'); t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('fill', stroke);
+      t.setAttribute('font-family', "'Instrument Serif',serif");
+      t.setAttribute('font-style', 'italic'); t.setAttribute('font-size', '27');
+      t.textContent = spec.s;
+      parent.appendChild(t);
+      return;
+    }
+    if (spec.t === 'g') {
+      const g = document.createElementNS(SVG_NS, 'g');
+      g.setAttribute('transform', spec.tr);
+      spec.kids.forEach(k => build(k, g));
+      parent.appendChild(g);
+      return;
+    }
+    const n = document.createElementNS(SVG_NS, spec.t);
+    for (const [k, v] of Object.entries(spec)) {
+      if (k !== 't' && k !== 'thin') n.setAttribute(k, v);
+    }
+    n.setAttribute('fill', 'none');
+    n.setAttribute('stroke', stroke);
+    n.setAttribute('stroke-width', spec.thin ? sw * 0.8 : sw);
+    n.setAttribute('stroke-linecap', 'round');
+    n.setAttribute('stroke-linejoin', 'round');
+    parent.appendChild(n);
+  };
+  (MOTIFS[motifId] || MOTIFS.star).forEach(s => build(s, svg));
+  return svg;
+}
+
+function waxSeal(cls, m) {
+  const seal = el('div', cls);
+  seal.appendChild(motifSvg(motifOf(m), 'rgba(255,240,225,.92)', 2.8));
+  return seal;
+}
+
+// Corner ribbon + sky wash + faint motif watermark — the envelope's interior
+function appendDetailTheme(m) {
+  const a = accentOf(m);
+  const wash = el('div', 'detail-wash');
+  wash.style.background = 'radial-gradient(ellipse at 50% 0%, ' + a + '3d, transparent 65%)';
+  const rib = el('div', 'detail-ribbon');
+  rib.style.background = a;
+  const wm = el('div', 'detail-watermark');
+  wm.appendChild(motifSvg(motifOf(m), a, 2));
+  app.append(wash, rib, wm);
+}
 
 const PROMPTS = [
   // Who she is now
@@ -1267,7 +1421,10 @@ function renderAuthor() {
     const count = entriesFor(who, m.id).length;
     const env = el('div', 'envelope w-' + who);
     env.appendChild(el('div', 'flap'));
-    env.appendChild(el('div', 'seal', 'C'));
+    env.appendChild(waxSeal('seal', m));
+    const rib = el('div', 'env-ribbon');
+    rib.style.background = accentOf(m);
+    env.appendChild(rib);
     env.appendChild(el('div', 'env-when', m.when.replace('Open ', '')));
     env.appendChild(el('div', 'env-meta', count === 0 ? 'Empty — tap to begin' : count + (count === 1 ? ' entry inside' : ' entries inside')));
     env.addEventListener('click', () => { openMilestone = m.id; render(); });
@@ -1334,7 +1491,25 @@ function openNewEnvelope() {
         dateLabel.hidden = !show; date.hidden = !show;
       });
       box.append(dateLabel, date);
-      return { name, sel, date };
+
+      box.appendChild(el('label', null, 'Its mark (wax seal & ribbon color)'));
+      const pickRow = el('div', 'motif-row');
+      let chosen = 'star';
+      const picks = new Map();
+      ['star', 'heart', 'rings', 'cap', 'feet', 'umbrella', 'plane', 'sparkles'].forEach(mid => {
+        const b = el('button', 'motif-pick' + (mid === chosen ? ' sel' : ''));
+        b.type = 'button';
+        b.style.color = MOTIF_ACCENT[mid];
+        b.appendChild(motifSvg(mid, 'currentColor', 2.6));
+        b.addEventListener('click', () => {
+          chosen = mid;
+          picks.forEach((bb, bid) => bb.classList.toggle('sel', bid === mid));
+        });
+        picks.set(mid, b);
+        pickRow.appendChild(b);
+      });
+      box.appendChild(pickRow);
+      return { name, sel, date, getMotif: () => chosen };
     },
     onConfirm(api) {
       const label = api.name.value.trim();
@@ -1343,7 +1518,7 @@ function openNewEnvelope() {
       const id = 'ms_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
       const unlock = api.sel.value === 'date' ? { type: 'date', date: api.date.value } : { type: api.sel.value };
       commit(recs => {
-        recs[id] = { id, type: 'milestone', when: label, unlock, createdAt: AZ.today(), updatedAt: Date.now() };
+        recs[id] = { id, type: 'milestone', when: label, unlock, motif: api.getMotif(), createdAt: AZ.today(), updatedAt: Date.now() };
       });
       ensureAutoUnlocks();
       toast('On the shelf. Start filling it.');
@@ -1354,13 +1529,18 @@ function openNewEnvelope() {
 
 function renderMilestoneDetail() {
   const m = getMilestone(openMilestone);
+  appendDetailTheme(m);
   const back = el('div', 'back-row');
   const bb = el('button', 'back-btn', '← All envelopes');
   bb.addEventListener('click', () => { openMilestone = null; render(); });
   back.appendChild(bb);
   app.appendChild(back);
 
+  app.appendChild(waxSeal('detail-seal w-' + who, m));
   app.appendChild(el('div', 'detail-title', m.when));
+  const rule = el('div', 'accent-rule');
+  rule.style.background = accentOf(m);
+  app.appendChild(rule);
   app.appendChild(el('div', 'detail-sub', 'For ' + WHO_LABEL[who] +
     (m.unlock.type === 'always' ? ' · never sealed — open whenever' : ' · sealed until the day comes')));
 
@@ -1905,8 +2085,11 @@ function renderReaderShelf(isRealReader) {
     const opened = openedSeals.has(who + ':' + m.id);
     const env = el('div', 'envelope w-' + who + (opened ? ' opened' : ''));
     env.appendChild(el('div', 'flap'));
-    const seal = el('div', 'seal', 'C');
+    const seal = waxSeal('seal', m);
     env.appendChild(seal);
+    const rib = el('div', 'env-ribbon');
+    rib.style.background = accentOf(m);
+    env.appendChild(rib);
     env.appendChild(el('div', 'env-when', m.when.replace('Open ', '')));
     env.appendChild(el('div', 'env-status' + (unlocked && !opened ? ' ready' : ''),
       opened ? 'Opened' : unlocked ? 'Ready — break the seal' : 'Still sealed'));
@@ -1969,13 +2152,18 @@ function openKeeperUnlock(m, seal) {
 
 function renderReaderOpen() {
   const m = getMilestone(openMilestone);
+  appendDetailTheme(m);
   const back = el('div', 'back-row');
   const bb = el('button', 'back-btn', '← All letters');
   bb.addEventListener('click', () => { openMilestone = null; render(); });
   back.appendChild(bb);
   app.appendChild(back);
 
+  app.appendChild(waxSeal('detail-seal w-' + who, m));
   app.appendChild(el('div', 'detail-title', m.when));
+  const rule = el('div', 'accent-rule');
+  rule.style.background = accentOf(m);
+  app.appendChild(rule);
 
   const list = entriesFor(who, m.id);
   if (list.length === 0) {
@@ -2522,7 +2710,12 @@ function openPrintEdition() {
         if (!list.length) return;
         any = true;
         const ms = el('div', 'p-ms');
-        ms.appendChild(el('h3', null, m.when));
+        const h = el('h3');
+        const mv = motifSvg(motifOf(m), accentOf(m), 2.6);
+        mv.setAttribute('style', 'width:17px;height:17px;vertical-align:-2px;margin-right:7px');
+        h.appendChild(mv);
+        h.appendChild(document.createTextNode(m.when));
+        ms.appendChild(h);
         list.forEach(e => {
           const card = el('div', 'p-entry' + (e.author === 'kat' ? ' by-kat' : ''));
           if (e.kind === 'photo') {
