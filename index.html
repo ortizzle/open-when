@@ -419,6 +419,12 @@
   .stat-note { font-size: .8rem; color: var(--text-dim); font-style: italic; margin-top: 14px; line-height: 1.5; }
   .stat-note.warn { color: var(--sedona); font-style: normal; }
 
+  .modal-box label.env-check {
+    display: flex; align-items: center; gap: 10px; min-height: 40px; margin: 0;
+    text-transform: none; letter-spacing: 0; color: var(--text); font-size: .92rem; cursor: pointer;
+  }
+  .modal-box label.env-check input { width: 20px; height: 20px; min-height: 0; margin: 0; flex: 0 0 auto; accent-color: var(--gold); }
+
   /* ---------- Recorder ---------- */
   .rec-wrap { text-align: center; padding: 8px 0; }
   .rec-time { font-family: 'Instrument Serif', serif; font-size: 2rem; margin: 8px 0; }
@@ -506,7 +512,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
 /* ============ Arizona time (no DST — never derive "today" from toISOString) ============ */
 
@@ -678,15 +684,27 @@ async function sha256hex(s) {
 
 /* ============ Records ============ */
 
+// Oldest to newest by the day it was written (createdAt) — editing an old
+// entry must not jump it to the bottom, so sort on createdAt, not updatedAt.
 function activeEntries() {
   return Object.values(DB.records)
     .filter(r => r.type === 'entry' && !r.deleted)
-    .sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0));
+    .sort((a, b) =>
+      String(a.createdAt || '').localeCompare(String(b.createdAt || '')) ||
+      (a.updatedAt || 0) - (b.updatedAt || 0));
+}
+
+// An entry can live in more than one envelope. Legacy entries carry a single
+// `milestone`; newer ones carry a `milestones` array (and still write
+// `milestone` = the first, so an older phone shows it in at least one place).
+function milestonesOf(e) {
+  if (Array.isArray(e.milestones) && e.milestones.length) return e.milestones;
+  return e.milestone ? [e.milestone] : [];
 }
 
 function entriesFor(whoKey, msId) {
   return activeEntries().filter(e =>
-    e.milestone === msId && (whoKey === 'both' ? e.who === 'both' : (e.who === whoKey || e.who === 'both'))
+    milestonesOf(e).includes(msId) && (whoKey === 'both' ? e.who === 'both' : (e.who === whoKey || e.who === 'both'))
   );
 }
 
@@ -1267,7 +1285,7 @@ function renderAuthor() {
     mc.appendChild(el('div', 'prompt-label', 'Around this time last year'));
     const snip = (mem.title || mem.q || mem.body || '').slice(0, 120);
     mc.appendChild(el('div', 'mem-snippet', '“' + snip + (snip.length === 120 ? '…' : '') + '”'));
-    mc.appendChild(el('div', 'mem-meta', getMilestone(mem.milestone).when + ' · for ' + WHO_LABEL[mem.who] + ' · tap to revisit'));
+    mc.appendChild(el('div', 'mem-meta', getMilestone(milestonesOf(mem)[0]).when + ' · for ' + WHO_LABEL[mem.who] + ' · tap to revisit'));
     mc.addEventListener('click', () => { who = mem.who; openMilestone = mem.milestone; render(); });
     app.appendChild(mc);
   }
@@ -1365,7 +1383,7 @@ function renderMilestoneDetail() {
         un.appendChild(b);
       }
     });
-    if (m.type === 'milestone' && activeEntries().filter(e => e.milestone === m.id).length === 0) {
+    if (m.type === 'milestone' && activeEntries().filter(e => milestonesOf(e).includes(m.id)).length === 0) {
       const rm = el('button', 'unlock-btn', 'Remove this envelope');
       rm.addEventListener('click', () => {
         showModal({
@@ -1501,34 +1519,50 @@ function fmtDur(s) {
 
 function saveEntry(fields) {
   const id = uid();
+  const milestones = (fields.milestones && fields.milestones.length)
+    ? fields.milestones : (fields.milestone ? [fields.milestone] : []);
   const entry = {
     id, type: 'entry', author: role() === 'kat' ? 'kat' : 'chris',
-    createdAt: AZ.today(), updatedAt: Date.now(), ...fields
+    createdAt: AZ.today(), updatedAt: Date.now(), ...fields,
+    milestones, milestone: milestones[0]
   };
   commit(recs => { recs[id] = entry; });
   return entry;
 }
 
+// A tappable checklist of every envelope — the one place multi-filing lives.
+function envelopeChecklist(box, preselected) {
+  const boxes = [];
+  allMilestones().forEach(m => {
+    const lab = el('label', 'env-check');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.value = m.id; cb.checked = preselected.includes(m.id);
+    lab.appendChild(cb);
+    lab.appendChild(el('span', null, m.when));
+    box.appendChild(lab);
+    boxes.push(cb);
+  });
+  return () => boxes.filter(b => b.checked).map(b => b.value);
+}
+
 function openFilePicker(question, answer) {
   showModal({
     title: 'File this answer',
-    message: 'Which envelope should hold it?',
+    message: 'Tick every envelope that should hold it — one or more.',
     confirmText: 'Seal it', cancelText: 'Cancel',
     buildBody(box) {
-      const sel = document.createElement('select');
-      allMilestones().forEach(m => {
-        const o = document.createElement('option');
-        o.value = m.id; o.textContent = m.when;
-        sel.appendChild(o);
-      });
-      box.appendChild(sel);
-      return { sel };
+      const getEnv = envelopeChecklist(box, []);
+      return { getEnv };
     },
     onConfirm(api) {
-      saveEntry({ kind: 'answer', who, milestone: api.sel.value, q: question, body: answer });
+      const envs = api.getEnv();
+      if (!envs.length) { toast('Tick at least one envelope.'); return false; }
+      saveEntry({ kind: 'answer', who, milestones: envs, q: question, body: answer });
       promptIdx++; promptOverride = null; Store.set('prompt_idx', promptIdx);
       Store.remove('draft_prompt_' + who);
-      toast('Sealed. ' + WHO_LABEL[who] + ' will read it one day.');
+      toast(envs.length > 1
+        ? 'Sealed into ' + envs.length + ' envelopes.'
+        : 'Sealed. ' + WHO_LABEL[who] + ' will read it one day.');
       render();
     }
   });
@@ -1580,7 +1614,9 @@ function openCompose(type, milestone) {
         body.value = Store.get(draftKey, '');
         body.addEventListener('input', () => Store.set(draftKey, body.value));
         box.appendChild(body);
-        return { title, caption, body, draftKey };
+        box.appendChild(el('label', null, 'Appears in these envelopes'));
+        const getEnv = envelopeChecklist(box, [milestone.id]);
+        return { title, caption, body, draftKey, getEnv };
       }
       box.appendChild(el('label', null, 'The letter'));
       const body = document.createElement('textarea');
@@ -1589,18 +1625,22 @@ function openCompose(type, milestone) {
       body.value = Store.get(draftKey, '');
       body.addEventListener('input', () => Store.set(draftKey, body.value));
       box.appendChild(body);
-      return { title, body, draftKey };
+      box.appendChild(el('label', null, 'Appears in these envelopes'));
+      const getEnv = envelopeChecklist(box, [milestone.id]);
+      return { title, body, draftKey, getEnv };
     },
     onConfirm(api) {
       if (!api.body.value.trim()) { toast('Write a little something first.'); return false; }
+      const envs = api.getEnv();
+      if (!envs.length) { toast('Keep it in at least one envelope.'); return false; }
       Store.remove(api.draftKey);
       const entry = saveEntry({
-        kind: type, who, milestone: milestone.id,
+        kind: type, who, milestones: envs,
         title: api.title.value.trim() || (isPhoto ? 'Untitled photo' : 'Untitled letter'),
         caption: isPhoto ? (api.caption.value.trim() || '') : undefined,
         body: api.body.value.trim()
       });
-      toast('Sealed into “' + milestone.when + '”.');
+      toast(envs.length > 1 ? 'Sealed into ' + envs.length + ' envelopes.' : 'Sealed into “' + milestone.when + '”.');
       // Entry text is saved; photos attach second so a failed upload never loses the words.
       if (isPhoto && photoFiles.length) {
         const stamp = Date.now().toString(36);
@@ -1623,7 +1663,7 @@ function openCompose(type, milestone) {
 function openEdit(e) {
   showModal({
     title: 'Edit this entry',
-    message: getMilestone(e.milestone).when + ' · for ' + WHO_LABEL[e.who],
+    message: getMilestone(milestonesOf(e)[0]).when + ' · for ' + WHO_LABEL[e.who],
     confirmText: 'Save it', cancelText: 'Cancel',
     buildBody(box) {
       let title = null, caption = null;
@@ -1672,16 +1712,21 @@ function openEdit(e) {
       const body = document.createElement('textarea');
       body.value = e.body || '';
       box.appendChild(body);
-      return { title, caption, body, getKept, addInput };
+      box.appendChild(el('label', null, 'Appears in these envelopes'));
+      const getEnv = envelopeChecklist(box, milestonesOf(e));
+      return { title, caption, body, getKept, addInput, getEnv };
     },
     onConfirm(api) {
       if (!api.body.value.trim()) { toast('It can’t be empty — delete it instead.'); return false; }
+      const envs = api.getEnv();
+      if (!envs.length) { toast('Keep it in at least one envelope — or delete it instead.'); return false; }
       commit(recs => {
         recs[e.id] = {
           ...e,
           title: api.title ? (api.title.value.trim() || e.title) : e.title,
           caption: api.caption ? api.caption.value.trim() : e.caption,
           body: api.body.value.trim(),
+          milestones: envs, milestone: envs[0],
           // editing a photo story normalizes it onto the photos array (legacy single-media included)
           ...(e.kind === 'photo' ? { photos: api.getKept(), media: undefined } : {}),
           updatedAt: Date.now()
