@@ -10,7 +10,7 @@
  * Bump CACHE on any shell-file change so returning phones pick up new code
  * instead of a stale cache. Keep it in step with APP_VERSION in index.html.
  */
-const CACHE = 'open-when-v1.5.0';
+const CACHE = 'open-when-v1.5.1';
 const SHELL = [
   './',
   './index.html',

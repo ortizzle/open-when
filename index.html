@@ -170,11 +170,11 @@
   .envelope {
     position: relative; border-radius: 10px; cursor: pointer; overflow: hidden;
     background: linear-gradient(175deg, var(--paper) 0%, var(--paper-dim) 100%);
-    color: var(--ink); padding: 44px 14px 14px; min-height: 128px;
+    color: var(--ink); padding: 80px 14px 14px; min-height: 148px;
     box-shadow: 0 6px 18px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.4);
     transition: transform .15s;
   }
-  .seal svg { width: 21px; height: 21px; }
+  .seal svg { width: 30px; height: 30px; }
   .env-ribbon {
     position: absolute; top: 10px; left: -18px; width: 74px; height: 8px;
     transform: rotate(-45deg); box-shadow: 0 1px 2px rgba(0,0,0,.25);
@@ -182,14 +182,14 @@
   }
   .envelope:active { transform: scale(.97); }
   .envelope .flap {
-    position: absolute; top: 0; left: 0; right: 0; height: 34px;
-    background: linear-gradient(180deg, var(--paper-dim), rgba(0,0,0,.06));
+    position: absolute; top: 0; left: 0; right: 0; height: 58px;
+    background: linear-gradient(180deg, var(--paper-dim), rgba(0,0,0,.07));
     clip-path: polygon(0 0, 100% 0, 50% 100%);
     border-radius: 10px 10px 0 0;
   }
   .envelope .seal {
-    position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
-    width: 38px; height: 38px; border-radius: 50%;
+    position: absolute; top: 30px; left: 50%; transform: translateX(-50%);
+    width: 50px; height: 50px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
     font-family: 'Instrument Serif', serif; font-style: italic; font-size: 1.15rem;
     color: rgba(255, 240, 225, .92);
@@ -203,7 +203,7 @@
   .envelope.opened .flap { clip-path: polygon(0 0, 100% 0, 50% 30%); opacity: .6; }
 
   .env-when {
-    font-family: 'Caveat', cursive; font-size: 1.28rem; line-height: 1.15;
+    font-family: 'Caveat', cursive; font-size: 1.3rem; line-height: 1.15;
     color: var(--ink); text-align: center; margin-top: 2px;
   }
   .env-meta {
@@ -553,7 +553,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 
 /* ============ Arizona time (no DST — never derive "today" from toISOString) ============ */
 
