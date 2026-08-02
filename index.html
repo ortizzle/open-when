@@ -553,7 +553,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.7.0';
 
 /* ============ Arizona time (no DST — never derive "today" from toISOString) ============ */
 
@@ -981,7 +981,9 @@ const Sync = {
       const r = out.records[id];
       if (!r || (rec.updatedAt || 0) > (r.updatedAt || 0)) out.records[id] = rec;
     }
-    const cutoff = Date.now() - 60 * 86400000;
+    // Tombstones are tiny; keep them ~2 years so a phone that sat in a drawer
+    // past the cutoff can't resurrect a deletion when it finally syncs.
+    const cutoff = Date.now() - 730 * 86400000;
     for (const [id, rec] of Object.entries(out.records)) {
       if (rec.deleted && rec.updatedAt < cutoff) delete out.records[id];
     }
@@ -994,11 +996,11 @@ const Sync = {
     this.busy = true;
     setSyncUI('busy');
     try {
-      let merged = DB;
-      try {
-        const remote = await this.pullRemote();
-        merged = this.merge(DB, remote);
-      } catch (e) { if (String(e.message).includes('NO_GIST')) throw e; }
+      // If the pull fails for ANY reason, abort the whole save — writing
+      // local-only state would blind-overwrite whatever the other phone
+      // synced, and the daily mirror could then snapshot the clobbered copy.
+      const remote = await this.pullRemote();
+      const merged = this.merge(DB, remote);
       const res = await fetch('https://api.github.com/gists/' + Store.get('gist_id'), {
         method: 'PATCH',
         headers: { ...this.headers(), 'Content-Type': 'application/json' },
@@ -1012,7 +1014,7 @@ const Sync = {
       render();
       mirrorBackup();
     } catch (e) {
-      setSyncUI('err');
+      setSyncUI(isAuthError(e) ? 'auth' : 'err');
     } finally {
       this.busy = false;
     }
@@ -1028,10 +1030,14 @@ const Sync = {
       setSyncUI('ok');
       render();
     } catch (e) {
-      setSyncUI('err');
+      setSyncUI(isAuthError(e) ? 'auth' : 'err');
     }
   }
 };
+
+// A 401/403 is the key being dead (expired or revoked), not the network being
+// down — without this, an expired token looks like "offline" forever.
+const isAuthError = (e) => /\b40[13]\b/.test(String(e && e.message));
 
 let syncTimer = null;
 function scheduleSync() {
@@ -1054,6 +1060,7 @@ function setSyncUI(state) {
     txt.textContent = 'Synced · ' + new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: AZ.tz });
   }
   else if (state === 'err') { dot.classList.add('err'); txt.textContent = 'Couldn’t reach the shelf — saved here for now'; }
+  else if (state === 'auth') { dot.classList.add('err'); txt.textContent = 'The key isn’t working — it may have expired. Make a fresh one and update Settings.'; }
   else { txt.textContent = 'Ready to sync'; }
 }
 
@@ -1118,6 +1125,83 @@ function checkTokenExpiry(res) {
 /* ============ Media (private repo via contents API) ============ */
 
 const mediaRepo = () => Store.get('media_repo', 'ortizzle/open-when-media');
+
+// Failed uploads park their blobs here so the retry chip survives a reload —
+// localStorage can't hold blobs, and losing a voice recording is losing the
+// only copy. Best-effort: if IndexedDB is unavailable, retry stays session-only.
+const PendingDB = {
+  _open: null,
+  open() {
+    if (!this._open) {
+      this._open = new Promise((resolve, reject) => {
+        const req = indexedDB.open('openwhen_pending', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('pending');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    return this._open;
+  },
+  async put(key, value) {
+    try {
+      const db = await this.open();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('pending', 'readwrite');
+        tx.objectStore('pending').put(value, key);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch (e) {}
+  },
+  async remove(key) {
+    try {
+      const db = await this.open();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('pending', 'readwrite');
+        tx.objectStore('pending').delete(key);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch (e) {}
+  },
+  async all() {
+    try {
+      const db = await this.open();
+      return await new Promise((resolve, reject) => {
+        const out = [];
+        const req = db.transaction('pending').objectStore('pending').openCursor();
+        req.onsuccess = () => {
+          const cur = req.result;
+          if (cur) { out.push([cur.key, cur.value]); cur.continue(); }
+          else resolve(out);
+        };
+        req.onerror = () => reject(req.error);
+      });
+    } catch (e) { return []; }
+  }
+};
+
+// Refill the in-memory retry maps from IndexedDB after a reload, dropping
+// anything whose entry has since been deleted.
+async function restorePendingUploads() {
+  const saved = await PendingDB.all();
+  if (!saved.length) return;
+  let found = false;
+  for (const [key, val] of saved) {
+    const rec = DB.records[val.entryId];
+    if (!rec || rec.deleted) { PendingDB.remove(key); continue; }
+    if (val.kind === 'voice') {
+      pendingMedia.set(val.entryId, { blob: val.blob, mime: val.mime, ext: val.ext });
+      found = true;
+    } else if (val.kind === 'photo') {
+      const list = pendingPhotos.get(val.entryId) || [];
+      if (!list.some(p => p.slot === val.slot)) list.push({ blob: val.blob, slot: val.slot });
+      pendingPhotos.set(val.entryId, list);
+      found = true;
+    }
+  }
+  if (found) render();
+}
 
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
@@ -1212,7 +1296,11 @@ async function attachPhotos(entryId, items) {
         if (!photos.some(p => p.path === path)) photos.push({ path, mime: 'image/jpeg' });
         commit(recs => { recs[entryId] = { ...rec, photos, updatedAt: Date.now() }; });
       }
-    } catch (err) { failed.push(it); }
+      PendingDB.remove('photo_' + entryId + '_' + it.slot);
+    } catch (err) {
+      failed.push(it);
+      PendingDB.put('photo_' + entryId + '_' + it.slot, { entryId, kind: 'photo', blob: it.blob, slot: it.slot });
+    }
   }
   if (failed.length) pendingPhotos.set(entryId, failed); else pendingPhotos.delete(entryId);
   return failed.length;
@@ -1234,10 +1322,12 @@ function attachMedia(entryId, blob, mime, ext, onProgress) {
   const path = kind + '/' + entryId + '.' + ext;
   return uploadMedia(path, blob, onProgress).then(() => {
     pendingMedia.delete(entryId);
+    PendingDB.remove('voice_' + entryId);
     const rec = DB.records[entryId];
     if (rec) commit(recs => { recs[entryId] = { ...rec, media: { ...(rec.media || {}), path, mime }, updatedAt: Date.now() }; });
   }).catch(err => {
     pendingMedia.set(entryId, { blob, mime, ext });
+    PendingDB.put('voice_' + entryId, { entryId, kind: 'voice', blob, mime, ext });
     throw err;
   });
 }
@@ -1253,7 +1343,7 @@ function retryMedia(entryId) {
 
 /* ============ Modal ============ */
 
-function showModal({ title, message, confirmText = 'OK', cancelText = null, danger = false, onConfirm = null, buildBody = null }) {
+function showModal({ title, message, confirmText = 'OK', cancelText = null, danger = false, onConfirm = null, onCancel = null, buildBody = null }) {
   const overlay = el('div', 'modal-overlay');
   const box = el('div', 'modal-box');
   box.appendChild(el('h3', null, title));
@@ -1263,7 +1353,7 @@ function showModal({ title, message, confirmText = 'OK', cancelText = null, dang
   const row = el('div', 'modal-buttons');
   if (cancelText) {
     const c = el('button', 'btn-secondary', cancelText);
-    c.addEventListener('click', () => overlay.remove());
+    c.addEventListener('click', () => { overlay.remove(); if (onCancel) onCancel(); });
     row.appendChild(c);
   }
   const ok = el('button', danger ? 'btn-danger-ghost' : 'btn-primary', confirmText);
@@ -1963,6 +2053,8 @@ function openVoiceRecorder(milestone) {
       body.style.minHeight = '60px';
       body.placeholder = 'What made you record this tonight…';
       box.appendChild(body);
+      box.appendChild(el('label', null, 'Appears in these envelopes'));
+      const getEnv = envelopeChecklist(box, [milestone.id]);
 
       btn.addEventListener('click', async () => {
         if (mediaRecorder && mediaRecorder.state === 'recording') {
@@ -2012,12 +2104,14 @@ function openVoiceRecorder(milestone) {
       bar.style.display = 'none';
       bar.appendChild(el('div'));
       box.appendChild(bar);
-      return { title, body, bar, getBlob: () => blob, getMime: () => mime, getSeconds: () => seconds };
+      return { title, body, bar, getEnv, getBlob: () => blob, getMime: () => mime, getSeconds: () => seconds };
     },
     onConfirm(api, close) {
       if (!api.getBlob()) { toast('Record something first — even ten seconds counts.'); return false; }
+      const envs = api.getEnv();
+      if (!envs.length) { toast('Keep it in at least one envelope.'); return false; }
       const entry = saveEntry({
-        kind: 'voice', who, milestone: milestone.id,
+        kind: 'voice', who, milestones: envs,
         title: api.title.value.trim() || 'A voice note',
         body: api.body.value.trim(),
         media: { duration: api.getSeconds() }
@@ -2506,12 +2600,37 @@ function downloadJson(payload, filename) {
   a.remove();
 }
 
+// On Android the share sheet reaches Google Drive directly — no OAuth to
+// maintain. Each modal button tap is a fresh user gesture, which keeps
+// navigator.share happy even after the bundle spent a while packing media.
+function deliverBackup(payload, filename, savedMsg) {
+  let file = null;
+  try { file = new File([JSON.stringify(payload, null, 2)], filename, { type: 'application/json' }); } catch (e) {}
+  const canShare = !!(file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] }));
+  if (!canShare) { downloadJson(payload, filename); toast(savedMsg); return; }
+  showModal({
+    title: 'Backup ready',
+    message: 'Send it to Google Drive (or anywhere) from the share sheet — or just save the file on this phone.',
+    confirmText: 'Send it…', cancelText: 'Save the file',
+    onCancel() { downloadJson(payload, filename); toast(savedMsg); },
+    onConfirm() {
+      navigator.share({ files: [file], title: filename }).then(() => {
+        toast('Sent. Somewhere that isn’t a phone — good.');
+      }).catch(err => {
+        if (err && err.name === 'AbortError') return; // they closed the sheet — fine
+        downloadJson(payload, filename);
+        toast('Sharing didn’t work — saved the file here instead.');
+      });
+    }
+  });
+}
+
 function exportArchive() {
-  downloadJson(
+  deliverBackup(
     { app: 'open-when', version: APP_VERSION, exportedAt: new Date().toISOString(), records: DB.records },
-    'open-when-archive-' + AZ.today() + '.json'
+    'open-when-archive-' + AZ.today() + '.json',
+    'Archive saved. Keep a copy somewhere that isn’t a phone.'
   );
-  toast('Archive saved. Keep a copy somewhere that isn’t a phone.');
 }
 
 function mediaPathsInUse() {
@@ -2542,8 +2661,7 @@ async function exportBundle() {
     exportedAt: new Date().toISOString(), records: DB.records, media,
     ...(missing.length ? { missing } : {})
   };
-  downloadJson(payload, 'open-when-bundle-' + AZ.today() + '.json');
-  toast(missing.length
+  deliverBackup(payload, 'open-when-bundle-' + AZ.today() + '.json', missing.length
     ? 'Bundle saved — ' + missing.length + ' media file(s) couldn’t be fetched.'
     : 'Bundle saved. The whole book, one file.');
 }
@@ -2659,6 +2777,7 @@ function enterPrintMode(build) {
   closeBtn.addEventListener('click', exit);
   window.addEventListener('afterprint', function onAp() {
     window.removeEventListener('afterprint', onAp);
+    exit();
   });
   return Promise.resolve(build(root)).then(() => {
     document.body.appendChild(closeBtn);
@@ -2789,8 +2908,13 @@ window.__ow = {
   az: AZ
 };
 
+// Ask the browser not to evict our storage under pressure — this book may sit
+// untouched on a shelf phone for months at a time.
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+
 ensureAutoUnlocks();
 render();
+restorePendingUploads();
 Sync.load();
 
 // Service worker caches the app shell only — never the Gist/media/Claude APIs,

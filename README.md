@@ -15,7 +15,11 @@ Pages. Installs to the home screen as a PWA (`manifest.json` + `sw.js`).
 - **Text** (entries, unlocks, settings) lives in one secret Gist
   (`open-when-data` / `data.json`), synced with a safe-merge + tombstone model:
   newest `updatedAt` wins per record, deletes are tombstones that never
-  resurrect, tombstones prune after 60 days.
+  resurrect, tombstones prune after two years (long enough that a phone left
+  in a drawer can't bring a deletion back). If the pull half of a sync fails,
+  the save is aborted rather than risk overwriting the other phone's writing.
+  Photos and voice notes that fail to upload keep their blobs in IndexedDB, so
+  the retry chip survives closing the app.
 - **Media** (photos, voice notes) lives in the private repo
   **`ortizzle/open-when-media`**, uploaded via the GitHub contents API and
   fetched back through the API with auth (raw URLs don't work on private repos).
@@ -79,10 +83,16 @@ Three layers:
    embedded. This is the real "if anything happens" file; keep a copy
    somewhere that isn't a phone.
 
+On Android, both backup buttons offer the share sheet (Web Share API) so the
+file can go straight to Google Drive — with a plain download as the fallback
+on browsers that can't share files.
+
 **Settings → Restore from a backup file** loads either format back in. Restore
 merges — per record, the newest version wins — so an old backup can never
 overwrite newer writing. Bundles also offer to re-upload their embedded media
 into the media repo.
 
 The app also warns (quietly, via the API's token-expiration header) when the
-GitHub key is within 30 days of expiring.
+GitHub key is within 30 days of expiring, and once the key stops working the
+sync line says so plainly ("the key isn't working — it may have expired")
+instead of looking like an ordinary offline blip.
