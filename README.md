@@ -83,6 +83,10 @@ Three layers:
    embedded. This is the real "if anything happens" file; keep a copy
    somewhere that isn't a phone.
 
+On Android, both backup buttons offer the share sheet (Web Share API) so the
+file can go straight to Google Drive — with a plain download as the fallback
+on browsers that can't share files.
+
 **Settings → Restore from a backup file** loads either format back in. Restore
 merges — per record, the newest version wins — so an old backup can never
 overwrite newer writing. Bundles also offer to re-upload their embedded media

@@ -553,7 +553,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.7.0';
 
 /* ============ Arizona time (no DST — never derive "today" from toISOString) ============ */
 
@@ -1343,7 +1343,7 @@ function retryMedia(entryId) {
 
 /* ============ Modal ============ */
 
-function showModal({ title, message, confirmText = 'OK', cancelText = null, danger = false, onConfirm = null, buildBody = null }) {
+function showModal({ title, message, confirmText = 'OK', cancelText = null, danger = false, onConfirm = null, onCancel = null, buildBody = null }) {
   const overlay = el('div', 'modal-overlay');
   const box = el('div', 'modal-box');
   box.appendChild(el('h3', null, title));
@@ -1353,7 +1353,7 @@ function showModal({ title, message, confirmText = 'OK', cancelText = null, dang
   const row = el('div', 'modal-buttons');
   if (cancelText) {
     const c = el('button', 'btn-secondary', cancelText);
-    c.addEventListener('click', () => overlay.remove());
+    c.addEventListener('click', () => { overlay.remove(); if (onCancel) onCancel(); });
     row.appendChild(c);
   }
   const ok = el('button', danger ? 'btn-danger-ghost' : 'btn-primary', confirmText);
@@ -2600,12 +2600,37 @@ function downloadJson(payload, filename) {
   a.remove();
 }
 
+// On Android the share sheet reaches Google Drive directly — no OAuth to
+// maintain. Each modal button tap is a fresh user gesture, which keeps
+// navigator.share happy even after the bundle spent a while packing media.
+function deliverBackup(payload, filename, savedMsg) {
+  let file = null;
+  try { file = new File([JSON.stringify(payload, null, 2)], filename, { type: 'application/json' }); } catch (e) {}
+  const canShare = !!(file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] }));
+  if (!canShare) { downloadJson(payload, filename); toast(savedMsg); return; }
+  showModal({
+    title: 'Backup ready',
+    message: 'Send it to Google Drive (or anywhere) from the share sheet — or just save the file on this phone.',
+    confirmText: 'Send it…', cancelText: 'Save the file',
+    onCancel() { downloadJson(payload, filename); toast(savedMsg); },
+    onConfirm() {
+      navigator.share({ files: [file], title: filename }).then(() => {
+        toast('Sent. Somewhere that isn’t a phone — good.');
+      }).catch(err => {
+        if (err && err.name === 'AbortError') return; // they closed the sheet — fine
+        downloadJson(payload, filename);
+        toast('Sharing didn’t work — saved the file here instead.');
+      });
+    }
+  });
+}
+
 function exportArchive() {
-  downloadJson(
+  deliverBackup(
     { app: 'open-when', version: APP_VERSION, exportedAt: new Date().toISOString(), records: DB.records },
-    'open-when-archive-' + AZ.today() + '.json'
+    'open-when-archive-' + AZ.today() + '.json',
+    'Archive saved. Keep a copy somewhere that isn’t a phone.'
   );
-  toast('Archive saved. Keep a copy somewhere that isn’t a phone.');
 }
 
 function mediaPathsInUse() {
@@ -2636,8 +2661,7 @@ async function exportBundle() {
     exportedAt: new Date().toISOString(), records: DB.records, media,
     ...(missing.length ? { missing } : {})
   };
-  downloadJson(payload, 'open-when-bundle-' + AZ.today() + '.json');
-  toast(missing.length
+  deliverBackup(payload, 'open-when-bundle-' + AZ.today() + '.json', missing.length
     ? 'Bundle saved — ' + missing.length + ' media file(s) couldn’t be fetched.'
     : 'Bundle saved. The whole book, one file.');
 }
