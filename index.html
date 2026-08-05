@@ -553,7 +553,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.7.1';
 
 /* ============ Arizona time (no DST — never derive "today" from toISOString) ============ */
 
@@ -802,8 +802,13 @@ let DB = Store.get('data', { records: {} });
 let mode = 'author';            // 'author' | 'preview'  (author-role devices only)
 let who = 'sedona';
 let openMilestone = null;
-let promptIdx = Store.get('prompt_idx', Math.floor((Date.now() / 86400000)) % PROMPTS.length);
-let promptOverride = null;      // set by the ✨ Claude button
+// Tonight's prompt advances per tab — answering it for Sedona must not steal
+// the same question from River's (or Both's) tab. The old global 'prompt_idx'
+// stays as the fallback so nobody's place is lost on upgrade.
+const promptIdx = (w) => Store.get('prompt_idx_' + w,
+  Store.get('prompt_idx', Math.floor(Date.now() / 86400000) % PROMPTS.length));
+const bumpPromptIdx = (w) => Store.set('prompt_idx_' + w, promptIdx(w) + 1);
+const promptOverride = {};      // per tab, set by the ✨ Claude button
 const openedSeals = new Set(Store.get('opened_seals', []));
 const pendingMedia = new Map();  // entryId -> { blob, mime, ext } voice awaiting upload retry (session only)
 const pendingPhotos = new Map(); // entryId -> [{ blob, slot }] photos awaiting upload retry (session only)
@@ -1457,7 +1462,8 @@ function renderAuthor() {
   const card = el('div', 'prompt-card');
   card.appendChild(el('div', 'prompt-label', 'Tonight’s prompt'));
   const name = who === 'both' ? 'the girls' : WHO_LABEL[who];
-  const qText = (promptOverride || PROMPTS[((promptIdx % PROMPTS.length) + PROMPTS.length) % PROMPTS.length]).split('{name}').join(name);
+  const idx = promptIdx(who);
+  const qText = (promptOverride[who] || PROMPTS[((idx % PROMPTS.length) + PROMPTS.length) % PROMPTS.length]).split('{name}').join(name);
   card.appendChild(el('div', 'prompt-q', qText));
   const ta = document.createElement('textarea');
   ta.placeholder = 'Write it the way you would say it out loud…';
@@ -1471,7 +1477,7 @@ function renderAuthor() {
     openFilePicker(qText, ta.value.trim());
   });
   const shuffle = el('button', 'btn btn-ghost', 'Shuffle');
-  shuffle.addEventListener('click', () => { promptIdx++; promptOverride = null; Store.set('prompt_idx', promptIdx); render(); });
+  shuffle.addEventListener('click', () => { bumpPromptIdx(who); delete promptOverride[who]; render(); });
   actions.append(save, shuffle);
   if (Store.get('anthropic_key')) {
     const spark = el('button', 'btn btn-ghost', '✨ One just for tonight');
@@ -1828,7 +1834,7 @@ function openFilePicker(question, answer) {
       const envs = api.getEnv();
       if (!envs.length) { toast('Tick at least one envelope.'); return false; }
       saveEntry({ kind: 'answer', who, milestones: envs, q: question, body: answer });
-      promptIdx++; promptOverride = null; Store.set('prompt_idx', promptIdx);
+      bumpPromptIdx(who); delete promptOverride[who];
       Store.remove('draft_prompt_' + who);
       toast(envs.length > 1
         ? 'Sealed into ' + envs.length + ' envelopes.'
@@ -2346,7 +2352,7 @@ async function generateClaudePrompt(btn) {
     const data = await res.json();
     const text = data.content.filter(b => b.type === 'text').map(b => b.text).join(' ').trim();
     if (!text) throw new Error('empty');
-    promptOverride = text.replace(/^["“]|["”]$/g, '');
+    promptOverride[who] = text.replace(/^["“]|["”]$/g, '');
     render();
   } catch (e) {
     toast('Claude couldn’t come tonight — the shuffle still works.');
