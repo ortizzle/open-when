@@ -110,6 +110,12 @@
     text-align: center; font-size: .78rem; color: var(--text-dim);
     font-style: italic; margin: 10px 0 0;
   }
+  .drive-bar {
+    display: block; width: 100%; min-height: 48px; margin: 12px 0 0; padding: 10px 14px;
+    border-radius: 12px; border: 1px solid var(--gold-soft); background: rgba(201,163,92,.08);
+    color: var(--gold); font-family: 'Lora', serif; font-size: .82rem; cursor: pointer;
+  }
+  .drive-bar:disabled { opacity: .6; cursor: default; }
 
   /* ---------- Daughter tabs ---------- */
   .tabs { display: flex; gap: 10px; margin: 18px 0 20px; }
@@ -553,7 +559,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = '1.7.1';
+const APP_VERSION = '1.8.0';
 
 /* ============ Arizona time (no DST — never derive "today" from toISOString) ============ */
 
@@ -1018,6 +1024,7 @@ const Sync = {
       setSyncUI('ok');
       render();
       mirrorBackup();
+      Drive.maybe();
     } catch (e) {
       setSyncUI(isAuthError(e) ? 'auth' : 'err');
     } finally {
@@ -1034,6 +1041,7 @@ const Sync = {
       ensureAutoUnlocks();
       setSyncUI('ok');
       render();
+      Drive.maybe();
     } catch (e) {
       setSyncUI(isAuthError(e) ? 'auth' : 'err');
     }
@@ -1125,6 +1133,220 @@ function checkTokenExpiry(res) {
     Store.set('exp_warned', AZ.today());
     toast('Heads up — the GitHub key expires in ' + days + (days === 1 ? ' day' : ' days') + '. Make a fresh one and update Settings.');
   } catch (e) {}
+}
+
+/* ============ Google Drive backup ============ */
+
+// One dated JSON a day into My Drive / Ortiz App Backups / Open When, plus every
+// photo and recording, so a copy of the book lives where Chris can see it.
+// drive.file is the narrow scope: the app only ever sees files it created itself.
+// The client ID is Home OS's — same origin (ortizzle.github.io), same project.
+const GDRIVE_CLIENT_ID = '305346848345-0q6ojf9t6eqhguh4pb3f2gm5p7rhhmtq.apps.googleusercontent.com';
+const GDRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const GDRIVE_ROOT = 'Ortiz App Backups';
+const GDRIVE_APP = 'Open When';
+
+const Drive = {
+  gisLoading: null,
+  busy: false,
+  due: false,
+
+  enabled() { return !!Store.get('gdrive_on') && role() !== 'reader'; },
+
+  loadGis() {
+    if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
+    if (!this.gisLoading) {
+      this.gisLoading = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://accounts.google.com/gsi/client';
+        s.async = true;
+        s.onload = resolve;
+        s.onerror = () => { this.gisLoading = null; reject(new Error('Google sign-in didn’t load')); };
+        document.head.appendChild(s);
+      });
+    }
+    return this.gisLoading;
+  },
+
+  validToken() {
+    const t = Store.get('gdrive_token');
+    return t && t.accessToken && t.expiresAt > Date.now() + 60000 ? t.accessToken : null;
+  },
+
+  // Google access tokens last about an hour and there's no server to refresh
+  // them, so a new one needs a tap: Android Chrome blocks the sign-in popup
+  // unless it comes straight from a user gesture. GIS must already be loaded
+  // when the tap lands, or the await eats the gesture — hence preload().
+  requestToken() {
+    return new Promise((resolve, reject) => {
+      if (!(window.google && google.accounts && google.accounts.oauth2)) {
+        reject(new Error('Google sign-in is still loading — tap again in a second'));
+        return;
+      }
+      const client = google.accounts.oauth2.initTokenClient({
+        client_id: GDRIVE_CLIENT_ID,
+        scope: GDRIVE_SCOPE,
+        callback: (resp) => {
+          if (resp.error || !resp.access_token) { reject(new Error(resp.error_description || resp.error || 'not allowed')); return; }
+          Store.set('gdrive_token', { accessToken: resp.access_token, expiresAt: Date.now() + (resp.expires_in || 3600) * 1000 });
+          Store.set('gdrive_granted', true);
+          resolve(resp.access_token);
+        },
+        error_callback: (err) => reject(new Error(err && err.type === 'popup_closed' ? 'Sign-in closed' : 'Sign-in didn’t open'))
+      });
+      client.requestAccessToken({ prompt: Store.get('gdrive_granted') ? '' : 'consent' });
+    });
+  },
+
+  preload() { if (this.enabled()) this.loadGis().catch(() => {}); },
+
+  async api(url, opts = {}) {
+    const tok = this.validToken();
+    if (!tok) throw new Error('AUTH');
+    const res = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), 'Authorization': 'Bearer ' + tok } });
+    if (res.status === 401) { Store.set('gdrive_token', null); throw new Error('AUTH'); }
+    if (!res.ok) throw new Error('Drive ' + res.status);
+    return res.json();
+  },
+
+  async folder(name, parentId) {
+    const cache = Store.get('gdrive_folders', {}) || {};
+    const key = (parentId || 'root') + '/' + name;
+    if (cache[key]) {
+      try {
+        const f = await this.api('https://www.googleapis.com/drive/v3/files/' + cache[key] + '?fields=id,trashed');
+        if (!f.trashed) return f.id;
+      } catch (e) { if (e.message === 'AUTH') throw e; }
+    }
+    const q = "name='" + name.replace(/'/g, "\\'") + "' and mimeType='application/vnd.google-apps.folder' and trashed=false and '" + (parentId || 'root') + "' in parents";
+    const found = await this.api('https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q) + '&fields=files(id)&spaces=drive');
+    let id = found.files && found.files[0] && found.files[0].id;
+    if (!id) {
+      const made = await this.api('https://www.googleapis.com/drive/v3/files?fields=id', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', ...(parentId ? { parents: [parentId] } : {}) })
+      });
+      id = made.id;
+    }
+    cache[key] = id;
+    Store.set('gdrive_folders', cache);
+    return id;
+  },
+
+  upload(blob, name, parentId) {
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify({ name, parents: [parentId] })], { type: 'application/json' }));
+    form.append('file', blob);
+    return this.api('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', { method: 'POST', body: form });
+  },
+
+  // Same shape as the light archive, so Settings → Restore takes it as-is.
+  payload() {
+    return { app: 'open-when', version: APP_VERSION, exportedAt: new Date().toISOString(), records: DB.records };
+  },
+
+  // Cheap fingerprint: skip the nudge on days nothing changed.
+  fingerprint() {
+    const s = JSON.stringify(DB.records);
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return s.length + ':' + h + ':' + mediaPathsInUse().length;
+  },
+
+  async run() {
+    if (this.busy) return null;
+    this.busy = true;
+    try {
+      const root = await this.folder(GDRIVE_ROOT, null);
+      const app = await this.folder(GDRIVE_APP, root);
+      const name = 'open-when-' + AZ.today() + '.json';
+      const blob = new Blob([JSON.stringify(this.payload(), null, 2)], { type: 'application/json' });
+      const day = Store.get('gdrive_day_file');
+      let replaced = false;
+      if (day && day.date === AZ.today() && day.id) {
+        try {
+          await this.api('https://www.googleapis.com/upload/drive/v3/files/' + day.id + '?uploadType=media&fields=id', { method: 'PATCH', body: blob });
+          replaced = true;
+        } catch (e) { if (e.message === 'AUTH') throw e; }
+      }
+      if (!replaced) {
+        const made = await this.upload(blob, name, app);
+        Store.set('gdrive_day_file', { date: AZ.today(), id: made.id });
+      }
+
+      // Photos and voice: copy each one once; the map remembers what's already there.
+      const sent = Store.get('gdrive_media', {}) || {};
+      let copied = 0, failed = 0;
+      const todo = mediaPathsInUse().filter(p => !sent[p]);
+      if (todo.length) {
+        const photos = await this.folder('photos', app);
+        const voice = await this.folder('voice', app);
+        for (const p of todo) {
+          try {
+            const res = await fetch('https://api.github.com/repos/' + mediaRepo() + '/contents/' + p, {
+              headers: { 'Authorization': 'Bearer ' + token(), 'Accept': 'application/vnd.github.raw+json' }
+            });
+            if (!res.ok) throw new Error('media ' + res.status);
+            const made = await this.upload(await res.blob(), p.split('/').pop(), p.startsWith('voice/') ? voice : photos);
+            sent[p] = made.id;
+            Store.set('gdrive_media', sent);
+            copied++;
+          } catch (e) {
+            if (e.message === 'AUTH') throw e;
+            failed++;
+          }
+        }
+      }
+      Store.set('gdrive_last', AZ.today());
+      Store.set('gdrive_last_at', new Date().toISOString());
+      Store.set('gdrive_fp', this.fingerprint());
+      this.due = false;
+      return { copied, failed };
+    } finally {
+      this.busy = false;
+    }
+  },
+
+  // Called after each sync and on open. Saves quietly when a token is still
+  // live; otherwise raises the one-tap bar — only if something actually changed.
+  async maybe() {
+    if (!this.enabled() || this.busy) return;
+    if (Store.get('gdrive_fp') === this.fingerprint()) { this.due = false; return; }
+    this.preload();
+    if (this.validToken()) {
+      try { await this.run(); render(); return; } catch (e) { /* fall through to the tap */ }
+    }
+    if (!this.due) { this.due = true; render(); }
+  },
+
+  // From a tap: get a token if needed, then save. Never loses words — the Gist,
+  // the repo mirror and this phone all still hold everything if Drive says no.
+  async tapSave() {
+    try {
+      if (!this.validToken()) {
+        await this.loadGis();
+        await this.requestToken();
+      }
+      toast('Saving a copy to Google Drive…');
+      const r = await this.run();
+      if (!r) return;
+      Store.set('gdrive_on', true);
+      toast('Saved to Drive · ' + GDRIVE_ROOT + ' › ' + GDRIVE_APP + (r.copied ? ' · ' + r.copied + ' photos & recordings added' : '') + (r.failed ? ' · ' + r.failed + ' will retry next time' : ''));
+    } catch (e) {
+      toast(e.message === 'AUTH' ? 'Google sign-in expired — tap again to reconnect.' : 'Drive copy didn’t finish: ' + e.message + '. Nothing is lost.');
+    }
+    render();
+  }
+};
+
+function driveStatusLine() {
+  const at = Store.get('gdrive_last_at');
+  const n = Object.keys(Store.get('gdrive_media', {}) || {}).length;
+  if (!at) return 'Not saved yet.';
+  const d = new Date(at);
+  return 'Last saved ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Phoenix' }) +
+    ', ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Phoenix' }) +
+    (n ? ' · ' + n + (n === 1 ? ' photo or recording' : ' photos & recordings') + ' copied' : '');
 }
 
 /* ============ Media (private repo via contents API) ============ */
@@ -1445,6 +1667,12 @@ function renderAuthor() {
     app.appendChild(el('div', 'nudge', parts.join(' · ')));
   } else {
     app.appendChild(el('div', 'nudge', 'The shelf is empty — start with whatever is easiest. Even one voice note counts.'));
+  }
+
+  if (Drive.due && Drive.enabled()) {
+    const bar = el('button', 'drive-bar', '☁  New words since the last Drive copy — tap to save one');
+    bar.addEventListener('click', () => { bar.disabled = true; bar.textContent = 'Saving to Google Drive…'; Drive.tapSave(); });
+    app.appendChild(bar);
   }
 
   const tabs = el('div', 'tabs');
@@ -2533,6 +2761,21 @@ function openSettings() {
         box.appendChild(anthropic);
 
         box.appendChild(document.createElement('hr')).className = 'settings-sep';
+        box.appendChild(el('label', null, 'Google Drive copy'));
+        Drive.loadGis().catch(() => {});
+        const dv = el('button', 'settings-action', Store.get('gdrive_on') ? '☁ Save a copy to Google Drive now' : '☁ Connect Google Drive — a dated copy whenever something changes');
+        dv.addEventListener('click', () => Drive.tapSave());
+        box.appendChild(dv);
+        box.appendChild(el('div', 'hint', 'Goes to My Drive › ' + GDRIVE_ROOT + ' › ' + GDRIVE_APP + ' — the words as a JSON file you can restore from, plus every photo and recording. ' + (Store.get('gdrive_on') ? driveStatusLine() : 'The app can only see files it made there, nothing else in your Drive.')));
+        if (Store.get('gdrive_on')) {
+          const off = el('button', 'link-btn', 'Stop the Drive copies on this phone');
+          off.addEventListener('click', () => {
+            Store.set('gdrive_on', false); Store.set('gdrive_token', null); Drive.due = false;
+            toast('Drive copies off on this phone. Files already in Drive stay put.');
+            render();
+          });
+          box.appendChild(off);
+        }
         const rd = el('button', 'settings-action', '📊 What’s in the book — counts & room left');
         rd.addEventListener('click', openStorageReadout);
         box.appendChild(rd);
@@ -2921,6 +3164,7 @@ if (navigator.storage && navigator.storage.persist) navigator.storage.persist().
 ensureAutoUnlocks();
 render();
 restorePendingUploads();
+Drive.preload();
 Sync.load();
 
 // Service worker caches the app shell only — never the Gist/media/Claude APIs,
