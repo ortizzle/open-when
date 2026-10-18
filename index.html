@@ -559,7 +559,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.8.1';
 
 /* ============ Arizona time (no DST — never derive "today" from toISOString) ============ */
 
@@ -1235,7 +1235,8 @@ const Drive = {
 
   upload(blob, name, parentId) {
     const form = new FormData();
-    form.append('metadata', new Blob([JSON.stringify({ name, parents: [parentId] })], { type: 'application/json' }));
+    const meta = { name, parents: [parentId], ...(blob.type ? { mimeType: blob.type } : {}) };
+    form.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
     form.append('file', blob);
     return this.api('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', { method: 'POST', body: form });
   },
@@ -1287,7 +1288,10 @@ const Drive = {
               headers: { 'Authorization': 'Bearer ' + token(), 'Accept': 'application/vnd.github.raw+json' }
             });
             if (!res.ok) throw new Error('media ' + res.status);
-            const made = await this.upload(await res.blob(), p.split('/').pop(), p.startsWith('voice/') ? voice : photos);
+            // The GitHub raw response is typed application/vnd.github.raw+json —
+            // retype it so Drive shows a real photo or recording.
+            const typed = new Blob([await res.blob()], { type: mediaMime(p) });
+            const made = await this.upload(typed, p.split('/').pop(), p.startsWith('voice/') ? voice : photos);
             sent[p] = made.id;
             Store.set('gdrive_media', sent);
             copied++;
@@ -1296,6 +1300,17 @@ const Drive = {
             failed++;
           }
         }
+      }
+      if (!Store.get('gdrive_mime_fixed')) {
+        let allFixed = true;
+        for (const [p, id] of Object.entries(Store.get('gdrive_media', {}) || {})) {
+          try {
+            await this.api('https://www.googleapis.com/drive/v3/files/' + id + '?fields=id', {
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mimeType: mediaMime(p) })
+            });
+          } catch (e) { if (e.message === 'AUTH') throw e; allFixed = false; }
+        }
+        if (allFixed) Store.set('gdrive_mime_fixed', true);
       }
       Store.set('gdrive_last', AZ.today());
       Store.set('gdrive_last_at', new Date().toISOString());
@@ -1338,6 +1353,12 @@ const Drive = {
     render();
   }
 };
+
+function mediaMime(path) {
+  const ext = String(path).split('.').pop().toLowerCase();
+  return ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', heic: 'image/heic',
+    webm: 'audio/webm', ogg: 'audio/ogg', m4a: 'audio/mp4', mp4: 'audio/mp4', mp3: 'audio/mpeg', wav: 'audio/wav' })[ext] || 'application/octet-stream';
+}
 
 function driveStatusLine() {
   const at = Store.get('gdrive_last_at');
